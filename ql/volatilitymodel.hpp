@@ -1,7 +1,7 @@
 /* -*- mode: c++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 
 /*
- Copyright (C) 2006 Joseph Wang
+ Copyright (C) 2006 Joseph Wang, 2010 Liquidnet Holdings
 
  This file is part of QuantLib, a free-software/open-source library
  for financial quantitative analysts and developers - http://quantlib.org/
@@ -30,23 +30,25 @@
 
 namespace QuantLib {
 
-    template <class T>
+    template <class T, class Time = Date>
     class LocalVolatilityEstimator {
     public:
         virtual ~LocalVolatilityEstimator() {}
-        virtual TimeSeries<Volatility>
-        calculate(const TimeSeries<T> &quoteSeries) = 0;
+        virtual TimeSeries<Volatility, Time>
+        calculate(const TimeSeries<T, Time> &quoteSeries) = 0;
     };
 
-    class VolatilityCompositor {
+    template <class Time = Date>
+    class VolatilityCompositorTime {
       public:
-        virtual ~VolatilityCompositor() {}
-        virtual TimeSeries<Volatility>
-        calculate(const TimeSeries<Volatility>& volatilitySeries) = 0;
-        virtual void calibrate(const TimeSeries<Volatility>& volatilitySeries) = 0;
+        virtual ~VolatilityCompositorTime() {}
+        virtual TimeSeries<Volatility, Time>
+        calculate(const TimeSeries<Volatility, Time>& volatilitySeries) = 0;
+        virtual void calibrate(const TimeSeries<Volatility, Time>& volatilitySeries) = 0;
     };
+
+    typedef VolatilityCompositorTime<Date> VolatilityCompositor;
 
 }
-
 
 #endif
