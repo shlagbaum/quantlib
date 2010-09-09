@@ -2,6 +2,7 @@
 
 /*
  Copyright (C) 2006 Joseph Wang
+ Copyright (C) 2010 Liquidnet Holdings
 
  This file is part of QuantLib, a free-software/open-source library
  for financial quantitative analysts and developers - http://quantlib.org/
@@ -25,36 +26,325 @@
 #define quantlib_garch_volatility_model_hpp
 
 #include <ql/volatilitymodel.hpp>
+#include <ql/math/array.hpp>
+#include <ql/math/optimization/constraint.hpp>
+#include <ql/math/optimization/problem.hpp>
+#include <ql/math/optimization/endcriteria.hpp>
+#include <ql/errors.hpp>
 #include <vector>
 
 namespace QuantLib {
 
     //! GARCH volatility model
-    /*! Volatilities are assumed to be expressed on an annual basis.
+    /*! 
     */
-    class Garch11 : public VolatilityCompositor {
-      private:
-        Real alpha_, beta_, gamma_, vl_;
-      public:
-        Garch11(Real a, Real b, Real vl) :
-            alpha_(a), beta_(b), vl_(vl) {gamma_ = 1 - a - b;};
-        Garch11(const TimeSeries<Volatility>& qs) {
-            calibrate(qs);
-        };
-        TimeSeries<Volatility>
-        calculate(const TimeSeries<Volatility>& quoteSeries);
 
-        TimeSeries<Volatility>
-        calculate(const TimeSeries<Volatility>& quoteSeries,
-                  Real, Real, Real);
+	namespace Garch {
+		EndCriteria::Type calibrate_r2 (const std::vector<Volatility> &r2, Real meanr2,
+				Real &alpha, Real &beta, Real &omega);
 
-        void calibrate(const TimeSeries<Volatility>& quoteSeries);
+		EndCriteria::Type calibrate_r2 (const std::vector<Volatility> &r2, Real meanr2,
+				  OptimizationMethod &method, const EndCriteria &endCriteria,
+				  Real &alpha, Real &beta, Real &omega);
+
+		EndCriteria::Type calibrate_r2 (const std::vector<Volatility> &r2,
+				  OptimizationMethod &method,
+				  Constraint &constraints,
+				  const EndCriteria &endCriteria,
+				  const Array &initialGuess, Real &alpha, Real &beta, Real &omega);
+
+		EndCriteria::Type calibrate_r2 (const std::vector<Volatility> &r2,
+				  OptimizationMethod &method,
+				  const EndCriteria &endCriteria,
+				  const Array &initialGuess, Real &alpha, Real &beta, Real &omega);
+
+		template<typename Iterator>
+		Real to_r2 (Iterator begin, Iterator end, std::vector<Volatility> &r2) {
+			Real u2(0.0), meanr2(0.0), w(1.0);
+			for (; begin != end; ++begin) {
+				u2 = *begin; u2 *= u2;
+				meanr2 = (1.0 - w) * meanr2 + w * u2;
+				r2.push_back(u2);
+				w /= (w + 1.0);
+			}
+			return meanr2;
+		}
+	}; // namespace Garch
+
+
+    template <class Time = Date>
+    class Garch11 : public VolatilityCompositorTime<Time> {
+    public:
+    	  typedef TimeSeries<Volatility, Time> TimeSeries;
+    	  typedef typename TimeSeries::const_iterator ts_const_iterator;
+    	  typedef typename TimeSeries::value_iterator ts_value_iterator;
+
+    	  Garch11(Real a = 0.0, Real b = 0.0, Real vl = 0.0) :
+    		  alpha_(a), beta_(b), gamma_ (1 - a - b), vl_(vl) {}
+
+    	  Garch11(const TimeSeries& qs) {
+    		  calibrate(qs);
+    	  };
+
+    	  Real alpha() const { return alpha_; }
+
+    	  Real beta() const { return beta_; }
+
+    	  Real omega() const { return vl_ * gamma_; }
+
+    	  Real ltVol() const { return vl_; }
+
+    	  TimeSeries calculate(const TimeSeries &quoteSeries) {
+    		  return calculate(quoteSeries, alpha_, beta_, gamma_* vl_);
+    	  }
+
+    	  static TimeSeries
+    	  calculate(const TimeSeries &quoteSeries, Real alpha, Real beta, Real omega) {
+    		  TimeSeries retval;
+    		  ts_const_iterator cur = quoteSeries.begin();
+			  Real u = cur->second;
+    		  Real sigma2 = u*u;
+    		  retval[cur->first] = std::sqrt(sigma2);
+    		  ++cur;
+    		  while (cur != quoteSeries.end()) {
+    			  sigma2 = omega + alpha * u * u + beta * sigma2;
+    			  retval[cur->first] = std::sqrt(sigma2);
+    			  u = cur->second;
+    			  ++cur;
+    		  }
+    		  return retval;
+    	  }
+
+    	  Real forecast (Real r, Real sigma2) const {
+    		  return gamma_* vl_ + alpha_ * r * r + beta_ * sigma2;
+    	  }
+
+    	  void calibrate(const TimeSeries &quoteSeries) {
+    		  calibrate (quoteSeries.begin_values(), quoteSeries.end_values());
+    	  }
+
+    	  void calibrate(const TimeSeries &quoteSeries,
+        		OptimizationMethod &method, const EndCriteria &endCriteria) {
+    		  calibrate (quoteSeries.begin_values(), quoteSeries.end_values(), method, endCriteria);
+    	  }
+
+    	  void calibrate(const TimeSeries &quoteSeries,
+        		OptimizationMethod &method, const EndCriteria &endCriteria,
+        		const Array &initialGuess) {
+    		  calibrate (quoteSeries.begin_values(), quoteSeries.end_values(), method, endCriteria, initialGuess);
+    	  }
+
+    	  template<typename Iterator>
+    	  void calibrate (Iterator begin, Iterator end) {
+    		  std::vector<Volatility> r2;
+    		  Real meanr2 = Garch::to_r2(begin, end, r2);
+    		  Garch::calibrate_r2 (r2, meanr2, alpha_, beta_, vl_);
+    		  gamma_ = 1 - alpha_ - beta_;
+    		  vl_ /= gamma_;
+    	  }
+
+    	  template<typename Iterator, class Optimizer, class EndCriteria>
+    	  void calibrate (Iterator begin, Iterator end, Optimizer &method,
+    			  EndCriteria endCriteria) {
+    		  std::vector<Volatility> r2;
+    		  Real meanr2 = Garch::to_r2(begin, end, r2);
+    		  Garch::calibrate_r2 (r2, meanr2, method, endCriteria, alpha_, beta_, vl_);
+    		  gamma_ = 1 - alpha_ - beta_;
+    		  vl_ /= gamma_;
+    	  }
+
+    	  template<typename Iterator, class Optimizer, class EndCriteria>
+    	  void calibrate (Iterator begin, Iterator end, Optimizer &method,
+    			  EndCriteria endCriteria, const Array &initialGuess) {
+    		  std::vector<Volatility> r2;
+    		  Garch::to_r2(begin, end, r2);
+    		  Garch::calibrate_r2 (r2, method, endCriteria, initialGuess, alpha_, beta_, vl_);
+    		  gamma_ = 1 - alpha_ - beta_;
+    		  vl_ /= gamma_;
+    	  }
+
+    	  Real costFunction(const TimeSeries &quoteSeries, Real alpha = -1, Real beta = -1,
+    			  Real omega = -1) const {
+    		  if (alpha < 0) alpha = alpha_;
+    		  if (beta < 0) beta = beta_;
+    		  if (omega < 0) omega = vl_ * gamma_;
+
+    	      Real retval(0.0);
+    	      ts_value_iterator it = quoteSeries.begin_values();
+    	      Real u2(0.0), sigma2(0.0);
+    	      for (; it != quoteSeries.end_values(); ++it) {
+    	          sigma2 = omega + alpha * u2 + beta * sigma2;
+    	          u2 = *it; u2 *= u2;
+    	          retval += std::log(sigma2) + u2 / sigma2;
+    	      }
+    	      return retval / (2*quoteSeries.size());
+    	  }
     private:
-        Real costFunction(const TimeSeries<Volatility>& qs,
-                          Real alpha, Real beta, Real omega);
+        Real alpha_, beta_, gamma_, vl_;
     };
 
+// GARCH 2D
+
+class Garch11Diag {
+public:
+	Garch11Diag (Size dim) : omega_(dim, 0.0), alpha_(dim, dim, 0.0), beta_(dim, dim, 0.0) {
+	}
+
+	Garch11Diag (const Array &omega, const Matrix &alpha, const Matrix &beta) :
+		omega_(omega), alpha_(alpha), beta_(beta) {
+	}
+
+	const Disposable<Array> forecast (const Array &r, const Array &sigma) const;
+	const Array & omega() const { return omega_; }
+	const Matrix & alpha() const { return alpha_; }
+	const Matrix & beta() const { return beta_; }
+
+	Array & omega() { return omega_; }
+	Matrix & alpha() { return alpha_; }
+	Matrix & beta() { return beta_; }
+
+private:
+	Array omega_;
+	Matrix alpha_, beta_;
+};
+
+namespace Garch {
+	void initGuess (const std::vector<Volatility> &r1, const std::vector<Volatility> &r2,
+			Array &params);
+	void initGuess (const std::vector<Volatility> &r1, const std::vector<Volatility> &r2,
+			Real omega1, Real alpha1, Real beta1, Array &params);
+	Real calibrate (const std::vector<Volatility> &r1, const std::vector<Volatility> &r2, Array &params);
+	Real calibrate (const std::vector<Volatility> &r1, const std::vector<Volatility> &r2,
+			Array &params, OptimizationMethod &method, EndCriteria &endCriteria);
+	Disposable<Matrix> forecast (const Array &r, const Matrix &cov, const Garch11Diag &varModel,
+			Real omegaCov, Real alphaCov, Real betaCov);
+	void params2Model (const Array &params, Garch11Diag &varModel);
+	void model2Params (const Garch11Diag &varModel, Array &params);
+	Disposable<Matrix> calcCovMtx (const Array &g, Real beta);
 }
+
+//! GARCH(1,1) 2D volatility model
+/*!
+*/
+template <class Time = Date>
+class Garch2_11 {
+public:
+	  typedef TimeSeries<Volatility, Time> TimeSeries;
+	  typedef typename TimeSeries::const_iterator ts_const_iterator;
+	  typedef typename TimeSeries::value_iterator ts_value_iterator;
+
+	  Garch2_11() : varModel_(2), covModel_()  {
+	  }
+
+	  Garch2_11(const Garch11Diag & varModel, const Garch11<Time> & covarModel) :
+		  varModel_(varModel), covModel_(covarModel)  {
+	  }
+
+	  const Garch11Diag & diagModel() const { return varModel_; }
+
+	  const Garch11<Time> & covarModel() const { return covModel_; }
+
+	  Disposable<Matrix> ltVol() const {
+		  Matrix I(2, 2, 0.0);
+		  I[0][0] = I[1][1] = 1.0;
+		  Array g = inverse(I - varModel_.alpha() - varModel_.beta())*varModel_.omega();
+		  Real ltCov = covModel_.ltVol();
+		  Real beta = ltCov / g[0];
+		  return Garch::calcCovMtx (g, beta);
+	  }
+
+	  Real calibrate (const TimeSeries &r1, const TimeSeries &r2) {
+		  return calibrate (r1.begin_values(), r1.end_values(), r2.begin_values(), r2.end_values());
+	  }
+
+	  template <typename Iterator1, typename Iterator2>
+	  Real calibrate (Iterator1 begin1, Iterator1 end1, Iterator2 begin2, Iterator2 end2) {
+		  std::vector<Volatility> vr1(std::distance(begin1, end1));
+		  std::vector<Volatility> vr2(std::distance(begin2, end2));
+		  std::copy (begin1, end1, vr1.begin());
+		  std::copy (begin2, end2, vr2.begin());
+		  return calibrate(vr1, vr2);
+	  }
+
+	  template <typename Iterator1, typename Iterator2>
+	  Real calibrate (Iterator1 begin1, Iterator1 end1, Iterator2 begin2, Iterator2 end2,
+			  OptimizationMethod &method, EndCriteria &endCriteria) {
+		  std::vector<Volatility> vr1(std::distance(begin1, end1));
+		  std::vector<Volatility> vr2(std::distance(begin2, end2));
+		  std::copy (begin1, end1, vr1.begin());
+		  std::copy (begin2, end2, vr2.begin());
+		  return calibrate(vr1, vr2, method, endCriteria);
+	  }
+
+	  Real calibrate (const std::vector<Volatility> &r1, const std::vector<Volatility> &r2) {
+			Array params(11, 0.0);
+			Garch::initGuess (r1, r2, params);
+			Real res = Garch::calibrate (r1, r2, params);
+			Garch::params2Model (params, varModel_);
+			covModel_ = Garch11<Time>(params[9], params[10], params[8] / (1-params[9]-params[10]));
+			return res;
+	  }
+
+	  Real calibrate (const std::vector<Volatility> &r1, const std::vector<Volatility> &r2,
+			  OptimizationMethod &method, EndCriteria &endCriteria) {
+			Array params(11, 0.0);
+			Garch::initGuess (r1, r2, params);
+			Real res = Garch::calibrate (r1, r2, params, method, endCriteria);
+			Garch::params2Model (params, varModel_);
+			covModel_ = Garch11<Time>(params[9], params[10], params[8] / (1-params[9]-params[10]));
+			return res;
+	  }
+
+	  template <typename Iterator1, typename Iterator2>
+	  Real calibrate (Iterator1 begin1, Iterator1 end1, Iterator2 begin2, Iterator2 end2,
+			  const Garch11<Time> &model1) {
+		  std::vector<Volatility> vr1(std::distance(begin1, end1));
+		  std::vector<Volatility> vr2(std::distance(begin2, end2));
+		  std::copy (begin1, end1, vr1.begin());
+		  std::copy (begin2, end2, vr2.begin());
+		  return calibrate(vr1, vr2, model1);
+	  }
+
+	  template <typename Iterator1, typename Iterator2>
+	  Real calibrate (Iterator1 begin1, Iterator1 end1, Iterator2 begin2, Iterator2 end2,
+			  const Garch11<Time> &model1, OptimizationMethod &method, EndCriteria &endCriteria) {
+		  std::vector<Volatility> vr1(std::distance(begin1, end1));
+		  std::vector<Volatility> vr2(std::distance(begin2, end2));
+		  std::copy (begin1, end1, vr1.begin());
+		  std::copy (begin2, end2, vr2.begin());
+		  return calibrate(vr1, vr2, model1, method, endCriteria);
+	  }
+
+	  Real calibrate (const std::vector<Volatility> &r1, const std::vector<Volatility> &r2,
+			  const Garch11<Time> &model1) {
+			Array params(11, 0.0);
+			Garch::initGuess (r1, r2, model1.omega(), model1.alpha(), model1.beta(), params);
+			Real res = Garch::calibrate (r1, r2, params);
+			Garch::params2Model (params, varModel_);
+			covModel_ = Garch11<Time>(params[9], params[10], params[8] / (1-params[9]-params[10]));
+			return res;
+	  }
+
+	  Real calibrate (const std::vector<Volatility> &r1, const std::vector<Volatility> &r2,
+			  const Garch11<Time> &model1, OptimizationMethod &method, EndCriteria &endCriteria) {
+			Array params(11, 0.0);
+			Garch::initGuess (r1, r2, model1.omega(), model1.alpha(), model1.beta(), params);
+			Real res = Garch::calibrate (r1, r2, params, method, endCriteria);
+			Garch::params2Model (params, varModel_);
+			covModel_ = Garch11<Time>(params[9], params[10], params[8] / (1-params[9]-params[10]));
+			return res;
+	  }
+
+	  Disposable<Matrix> forecast (const Array &r, const Matrix &cov) const {
+		  return Garch::forecast(r, cov, varModel_, covModel_.omega(), covModel_.alpha(), covModel_.beta());
+	  }
+
+private:
+	Garch11Diag varModel_;
+	Garch11<Time> covModel_;
+};
+
+} // namespace QuantLib
 
 
 #endif
