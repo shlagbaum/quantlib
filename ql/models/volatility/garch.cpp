@@ -29,7 +29,7 @@
 #include <ql/math/linearleastsquaresregression.hpp>
 #include <ql/math/functional.hpp>
 #include <ql/math/solvers1d/brent.hpp>
-#include <ql/autocovariance.hpp>
+#include <ql/experimental/math/autocovariance.hpp>
 #include <ql/errors.hpp>
 #include <ql/qldefines.hpp>
 
@@ -372,7 +372,7 @@ namespace QuantLib { namespace Garch {
 		double fCost = QL_MAX_REAL;
 		if (constraints.test(opt1) && (fCost = cost.value(opt1)) < fCost1)
 			fCost1 = fCost;
-	} catch (const std::exception &error) {
+	} catch (const std::exception &) {
 		// TODO: what to do?
 	}
 
@@ -384,7 +384,7 @@ namespace QuantLib { namespace Garch {
 		double fCost = QL_MAX_REAL;
 		if (constraints.test(opt2) && (fCost = cost.value(opt2)) < fCost2)
 			fCost2 = fCost;
-	} catch (const std::exception &error) {
+	} catch (const std::exception &) {
 		// TODO: what to do?
 	}
 
@@ -529,7 +529,7 @@ void initGuess (const std::vector<Volatility> &r1, const std::vector<Volatility>
     f.push_back(identity<Volatility>());
 
     LinearLeastSquaresRegression<> lr(r1, r2, f);
-    Volatility bta = lr.a()[0];
+    Volatility bta = lr.coefficients()[0];
 
 	Real mean1 = 0;
 	Real mean2 = 0;
@@ -556,7 +556,7 @@ void initGuess (const std::vector<Volatility> &r1, const std::vector<Volatility>
 	try {
 		calibrate_r2 (vr1, mean1, alpha[0][0], beta[0][0], omega[0]);
 		calibrate_r2 (vr2, mean2, alpha[1][1], beta[1][1], omega[1]);
-	} catch (const std::exception &error) {
+	} catch (const std::exception &) {
 		// TODO: what to do?
 	}
 	model2Params (varModel, params);
@@ -573,7 +573,7 @@ void initGuess (const std::vector<Volatility> &r1, const std::vector<Volatility>
     f.push_back(identity<Volatility>());
 
     LinearLeastSquaresRegression<> lr(r1, r2, f);
-    Volatility bta = lr.a()[0];
+    Volatility bta = lr.coefficients()[0];
 
 	Real mean2 = 0;
 	Real w = 1.0, u2 = 0;
@@ -598,7 +598,7 @@ void initGuess (const std::vector<Volatility> &r1, const std::vector<Volatility>
 
 	try {
 		calibrate_r2 (vr2, mean2, alpha[1][1], beta[1][1], omega[1]);
-	} catch (const std::exception &error) {
+	} catch (const std::exception &) {
 		// TODO: what to do?
 	}
 	model2Params (varModel, params);
@@ -628,7 +628,7 @@ Real calibrate (const std::vector<Volatility> &r1, const std::vector<Volatility>
 		const Array &optimum = problem.currentValue();
 		std::copy (optimum.begin(), optimum.end(), params.begin());
 		res = problem.functionValue();
-	} catch (const std::exception &error) {
+	} catch (const std::exception &) {
 		// TODO: what to do?
 	}
 	return res;
