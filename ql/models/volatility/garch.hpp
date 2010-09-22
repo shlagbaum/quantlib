@@ -27,6 +27,7 @@
 
 #include <ql/volatilitymodel.hpp>
 #include <ql/math/array.hpp>
+#include <ql/math/matrix.hpp>
 #include <ql/math/optimization/constraint.hpp>
 #include <ql/math/optimization/problem.hpp>
 #include <ql/math/optimization/endcriteria.hpp>
