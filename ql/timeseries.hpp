@@ -2,6 +2,7 @@
 
 /*
  Copyright (C) 2006 Joseph Wang
+ Copyright (C) 2010 Liquidnet Holdings
 
  This file is part of QuantLib, a free-software/open-source library
  for financial quantitative analysts and developers - http://quantlib.org/
@@ -37,14 +38,14 @@ namespace QuantLib {
     //! Container for historical data
     /*! This class acts as a generic repository for a set of
         historical data.  Any single datum can be accessed through its
-        date, while sets of consecutive data can be accessed through
+        time, while sets of consecutive data can be accessed through
         iterators.
 
         \pre The <c>Container</c> type must satisfy the requirements
              set by the C++ standard for associative containers.
     */
     template <class T, class Time = Date, class Container = std::map<Time, T> >
-    class TimeSeries {
+    class TimeSeriesBase {
       public:
         typedef Time key_type;
         typedef T value_type;
@@ -52,24 +53,24 @@ namespace QuantLib {
         mutable Container values_;
       public:
         /*! Default constructor */
-        TimeSeries() {}
+        TimeSeriesBase() {}
         /*! This constructor initializes the history with a set of
-            values passed as two sequences, the first containing dates
+            values passed as two sequences, the first containing times
             and the second containing corresponding values.
         */
         template <class TimeIterator, class ValueIterator>
-        TimeSeries(TimeIterator tBegin, TimeIterator tEnd,
+        TimeSeriesBase(TimeIterator tBegin, TimeIterator tEnd,
                    ValueIterator vBegin) {
             while (tBegin != tEnd)
                 values_[*(tBegin++)] = *(vBegin++);
         }
         /*! This constructor initializes the history with a set of
             values. Such values are assigned to a corresponding number
-            of consecutive dates starting from <b><i>firstDate</i></b>
+            of consecutive times starting from <b><i>tBegin</i></b>
             included.
         */
         template <class ValueIterator>
-        TimeSeries(const Time& tBegin,
+        TimeSeriesBase(const Time& tBegin,
                    ValueIterator begin, ValueIterator end) {
             Time t = tBegin;
             while (begin != end)
@@ -77,12 +78,10 @@ namespace QuantLib {
         }
         //! \name Inspectors
         //@{
-        //! returns the first date for which a historical datum exists
-        Time firstDate() const;
-        Time earliest() const { return firstDate(); }
-        //! returns the last date for which a historical datum exists
-        Time lastDate() const;
-        Time latest() const { return lastDate(); }
+        //! returns the first time for which a historical datum exists
+        Time earliest() const;
+        //! returns the last time for which a historical datum exists
+        Time latest() const;
         //! returns the number of historical data including null ones
         Size size() const;
         //! returns whether the series contains any data
@@ -90,7 +89,7 @@ namespace QuantLib {
         //@}
         //! \name Historical data access
         //@{
-        //! returns the (possibly null) datum corresponding to the given date
+        //! returns the (possibly null) datum corresponding to the given time
         T operator[](const Time& t) const {
             if (values_.find(t) != values_.end())
                 return values_[t];
@@ -108,8 +107,7 @@ namespace QuantLib {
         //@{
         typedef typename Container::const_iterator const_iterator;
         typedef typename const_iterator::iterator_category iterator_category;
-        typedef typename Container::const_reverse_iterator
-                                           const_reverse_iterator;
+        typedef typename Container::const_reverse_iterator const_reverse_iterator;
         const_iterator begin() const;
         const_iterator end() const;
         const_reverse_iterator rbegin() const;
@@ -172,64 +170,104 @@ namespace QuantLib {
         const_iterator find(const Time&);
         const_iterator find(const Time&t) const { return values_.find(t); }
         void clear() { values_.clear(); }
-        //! returns the dates for which historical data exist
-        std::vector<Time> dates() const;
+        //! returns the times for which historical data exist
+        std::vector<Time> times() const;
         //! returns the historical data
         std::vector<T> values() const;
         //@}
     };
 
+    template <class T, class Container = std::map<Date, T> >
+	class TimeSeries : public TimeSeriesBase<T, Date, Container> {
+		typedef TimeSeriesBase<T, Date, Container> Base;
+	public:
+        /*! Inherited typedefs */
+        typedef typename Base::const_iterator const_iterator;
+        typedef typename Base::const_reverse_iterator const_reverse_iterator;
+        typedef typename Base::value_iterator value_iterator;
+        typedef typename Base::time_iterator time_iterator;
+
+        /*! Default constructor */
+		TimeSeries() : Base() {}
+        /*! This constructor initializes the history with a set of
+            values passed as two sequences, the first containing dates
+            and the second containing corresponding values.
+        */
+        template <class DateIterator, class ValueIterator>
+		TimeSeries(DateIterator dBegin, DateIterator dEnd, ValueIterator vBegin) : 
+			Base(dBegin, dEnd, vBegin) {
+        }
+        /*! This constructor initializes the history with a set of
+            values. Such values are assigned to a corresponding number
+            of consecutive dates starting from <b><i>firstDate</i></b>
+            included.
+        */
+        template <class ValueIterator>
+		TimeSeries(const Date& dBegin, ValueIterator begin, ValueIterator end) :
+			Base(dBegin, begin, end) {
+        }
+
+        //! returns the first date for which a historical datum exists
+		Date firstDate() const { return earliest(); }
+
+        //! returns the last date for which a historical datum exists
+		Date lastDate() const { return latest(); }
+
+        //! returns the dates for which historical data exist
+		std::vector<Date> dates() const { return times(); }
+	};
+
     // inline definitions
 
     template <class T, class Time, class C>
-    inline Time TimeSeries<T,Time,C>::firstDate() const {
+    inline Time TimeSeriesBase<T,Time,C>::earliest() const {
         QL_REQUIRE(!values_.empty(), "empty timeseries");
         return values_.begin()->first;
     }
 
     template <class T, class Time, class C>
-    inline Time TimeSeries<T,Time,C>::lastDate() const {
+    inline Time TimeSeriesBase<T,Time,C>::latest() const {
         QL_REQUIRE(!values_.empty(), "empty timeseries");
         return values_.rbegin()->first;
     }
 
     template <class T, class Time, class C>
-    inline Size TimeSeries<T,Time,C>::size() const {
+    inline Size TimeSeriesBase<T,Time,C>::size() const {
         return values_.size();
     }
 
     template <class T, class Time, class C>
-    inline bool TimeSeries<T,Time,C>::empty() const {
+    inline bool TimeSeriesBase<T,Time,C>::empty() const {
         return values_.empty();
     }
 
     template <class T, class Time, class C>
-    inline typename TimeSeries<T,Time,C>::const_iterator
-    TimeSeries<T,Time,C>::begin() const {
+    inline typename TimeSeriesBase<T,Time,C>::const_iterator
+    TimeSeriesBase<T,Time,C>::begin() const {
         return values_.begin();
     }
 
     template <class T, class Time, class C>
-    inline typename TimeSeries<T,Time,C>::const_iterator
-    TimeSeries<T,Time,C>::end() const {
+    inline typename TimeSeriesBase<T,Time,C>::const_iterator
+    TimeSeriesBase<T,Time,C>::end() const {
         return values_.end();
     }
 
     template <class T, class Time, class C>
-    inline typename TimeSeries<T,Time,C>::const_reverse_iterator
-    TimeSeries<T,Time,C>::rbegin() const {
+    inline typename TimeSeriesBase<T,Time,C>::const_reverse_iterator
+    TimeSeriesBase<T,Time,C>::rbegin() const {
         return values_.rbegin();
     }
 
     template <class T, class Time, class C>
-    inline typename TimeSeries<T,Time,C>::const_reverse_iterator
-    TimeSeries<T,Time,C>::rend() const {
+    inline typename TimeSeriesBase<T,Time,C>::const_reverse_iterator
+    TimeSeriesBase<T,Time,C>::rend() const {
         return values_.rend();
     }
 
     template <class T, class Time, class C>
-    inline typename TimeSeries<T,Time,C>::const_iterator
-    TimeSeries<T,Time,C>::find(const Time& t) {
+    inline typename TimeSeriesBase<T,Time,C>::const_iterator
+    TimeSeriesBase<T,Time,C>::find(const Time& t) {
         const_iterator i = values_.find(t);
         if (i == values_.end()) {
             values_[t] = Null<T>();
@@ -239,7 +277,7 @@ namespace QuantLib {
     }
 
     template <class T, class Time, class C>
-    std::vector<Time> TimeSeries<T,Time,C>::dates() const {
+    std::vector<Time> TimeSeriesBase<T,Time,C>::times() const {
         std::vector<Time> v;
         v.reserve(size());
         for (const_iterator i = begin(); i != end(); ++i)
@@ -248,7 +286,7 @@ namespace QuantLib {
     }
 
     template <class T, class Time, class C>
-    std::vector<T> TimeSeries<T,Time,C>::values() const {
+    std::vector<T> TimeSeriesBase<T,Time,C>::values() const {
         std::vector<T> v;
         v.reserve(size());
         for (const_iterator i = begin(); i != end(); ++i)
