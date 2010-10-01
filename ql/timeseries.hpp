@@ -208,13 +208,13 @@ namespace QuantLib {
         }
 
         //! returns the first date for which a historical datum exists
-		Date firstDate() const { return earliest(); }
+		Date firstDate() const { return Base::earliest(); }
 
         //! returns the last date for which a historical datum exists
-		Date lastDate() const { return latest(); }
+		Date lastDate() const { return Base::latest(); }
 
         //! returns the dates for which historical data exist
-		std::vector<Date> dates() const { return times(); }
+		std::vector<Date> dates() const { return Base::times(); }
 	};
 
     // inline definitions
