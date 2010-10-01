@@ -74,16 +74,16 @@ namespace QuantLib {
 
 
     template <class Time = Date>
-    class Garch11 : public VolatilityCompositorTime<Time> {
+    class Garch11T : public VolatilityCompositorTime<Time> {
     public:
-    	  typedef TimeSeries<Volatility, Time> TimeSeries;
+    	  typedef TimeSeriesBase<Volatility, Time> TimeSeries;
     	  typedef typename TimeSeries::const_iterator ts_const_iterator;
     	  typedef typename TimeSeries::value_iterator ts_value_iterator;
 
-    	  Garch11(Real a = 0.0, Real b = 0.0, Real vl = 0.0) :
+    	  Garch11T(Real a = 0.0, Real b = 0.0, Real vl = 0.0) :
     		  alpha_(a), beta_(b), gamma_ (1 - a - b), vl_(vl) {}
 
-    	  Garch11(const TimeSeries& qs) {
+    	  Garch11T(const TimeSeries& qs) {
     		  calibrate(qs);
     	  };
 
@@ -184,6 +184,8 @@ namespace QuantLib {
         Real alpha_, beta_, gamma_, vl_;
     };
 
+	typedef Garch11T<Date> Garch11;
+
 // GARCH 2D
 
 class Garch11Diag {
@@ -230,20 +232,20 @@ namespace Garch {
 template <class Time = Date>
 class Garch2_11 {
 public:
-	  typedef TimeSeries<Volatility, Time> TimeSeries;
+	  typedef TimeSeriesBase<Volatility, Time> TimeSeries;
 	  typedef typename TimeSeries::const_iterator ts_const_iterator;
 	  typedef typename TimeSeries::value_iterator ts_value_iterator;
 
 	  Garch2_11() : varModel_(2), covModel_()  {
 	  }
 
-	  Garch2_11(const Garch11Diag & varModel, const Garch11<Time> & covarModel) :
+	  Garch2_11(const Garch11Diag & varModel, const Garch11T<Time> & covarModel) :
 		  varModel_(varModel), covModel_(covarModel)  {
 	  }
 
 	  const Garch11Diag & diagModel() const { return varModel_; }
 
-	  const Garch11<Time> & covarModel() const { return covModel_; }
+	  const Garch11T<Time> & covarModel() const { return covModel_; }
 
 	  Disposable<Matrix> ltVol() const {
 		  Matrix I(2, 2, 0.0);
@@ -282,7 +284,7 @@ public:
 			Garch::initGuess (r1, r2, params);
 			Real res = Garch::calibrate (r1, r2, params);
 			Garch::params2Model (params, varModel_);
-			covModel_ = Garch11<Time>(params[9], params[10], params[8] / (1-params[9]-params[10]));
+			covModel_ = Garch11T<Time>(params[9], params[10], params[8] / (1-params[9]-params[10]));
 			return res;
 	  }
 
@@ -298,7 +300,7 @@ public:
 
 	  template <typename Iterator1, typename Iterator2>
 	  Real calibrate (Iterator1 begin1, Iterator1 end1, Iterator2 begin2, Iterator2 end2,
-			  const Garch11<Time> &model1) {
+			  const Garch11T<Time> &model1) {
 		  std::vector<Volatility> vr1(std::distance(begin1, end1));
 		  std::vector<Volatility> vr2(std::distance(begin2, end2));
 		  std::copy (begin1, end1, vr1.begin());
@@ -308,7 +310,7 @@ public:
 
 	  template <typename Iterator1, typename Iterator2>
 	  Real calibrate (Iterator1 begin1, Iterator1 end1, Iterator2 begin2, Iterator2 end2,
-			  const Garch11<Time> &model1, OptimizationMethod &method, EndCriteria &endCriteria) {
+			  const Garch11T<Time> &model1, OptimizationMethod &method, EndCriteria &endCriteria) {
 		  std::vector<Volatility> vr1(std::distance(begin1, end1));
 		  std::vector<Volatility> vr2(std::distance(begin2, end2));
 		  std::copy (begin1, end1, vr1.begin());
@@ -317,22 +319,22 @@ public:
 	  }
 
 	  Real calibrate (const std::vector<Volatility> &r1, const std::vector<Volatility> &r2,
-			  const Garch11<Time> &model1) {
+			  const Garch11T<Time> &model1) {
 			Array params(11, 0.0);
 			Garch::initGuess (r1, r2, model1.omega(), model1.alpha(), model1.beta(), params);
 			Real res = Garch::calibrate (r1, r2, params);
 			Garch::params2Model (params, varModel_);
-			covModel_ = Garch11<Time>(params[9], params[10], params[8] / (1-params[9]-params[10]));
+			covModel_ = Garch11T<Time>(params[9], params[10], params[8] / (1-params[9]-params[10]));
 			return res;
 	  }
 
 	  Real calibrate (const std::vector<Volatility> &r1, const std::vector<Volatility> &r2,
-			  const Garch11<Time> &model1, OptimizationMethod &method, EndCriteria &endCriteria) {
+			  const Garch11T<Time> &model1, OptimizationMethod &method, EndCriteria &endCriteria) {
 			Array params(11, 0.0);
 			Garch::initGuess (r1, r2, model1.omega(), model1.alpha(), model1.beta(), params);
 			Real res = Garch::calibrate (r1, r2, params, method, endCriteria);
 			Garch::params2Model (params, varModel_);
-			covModel_ = Garch11<Time>(params[9], params[10], params[8] / (1-params[9]-params[10]));
+			covModel_ = Garch11T<Time>(params[9], params[10], params[8] / (1-params[9]-params[10]));
 			return res;
 	  }
 
@@ -342,7 +344,7 @@ public:
 
 private:
 	Garch11Diag varModel_;
-	Garch11<Time> covModel_;
+	Garch11T<Time> covModel_;
 };
 
 } // namespace QuantLib
