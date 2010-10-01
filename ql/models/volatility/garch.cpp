@@ -195,16 +195,6 @@ namespace QuantLib { namespace Garch {
     alpha = gamma - beta;
     omega = meanr2 * (1 - gamma);
 
-    //if (fGammaLower*fGamma1 < 0) {
-  	//  Brent brent;
-  	//  brent.setLowerBound(fGammaLower);
-  	//  brent.setUpperBound(1.0);
-  	//  gamma = brent.solve(boost::bind(fGamma, _1, A, B), 1.0e-8, gamma, 0.5);
-  	//  beta = std::min(gamma, std::max(gamma * (1 - A) - B, 0.0));
-  	//  alpha = gamma - beta;
-  	//  omega = meanr2 * (1 - gamma);
-    //}
-
     if (std::fabs(A-0.5) < QL_EPSILON) {
     	gamma = std::max(gammaLower, -(1+4*B*B)/(4*B));
     	beta = std::min(gamma, std::max(gamma * (1 - A) - B, 0.0));
