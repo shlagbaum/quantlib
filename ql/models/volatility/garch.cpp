@@ -317,14 +317,14 @@ namespace QuantLib { namespace Garch {
     return gammaLower;
   }
 
-  EndCriteria::Type calibrate_r2 (const std::vector<Volatility> &r2, Real meanr2,
+  ProblemPtr calibrate_r2 (const std::vector<Volatility> &r2, Real meanr2,
 		  Real &alpha, Real &beta, Real &omega) {
 	EndCriteria endCriteria(10000, 500, tol_level, tol_level, tol_level);
 	Simplex method(0.001);
     return calibrate_r2 (r2, meanr2, method, endCriteria, alpha, beta, omega);
   }
 
-  EndCriteria::Type calibrate_r2 (const std::vector<Volatility> &r2, Real meanr2,
+  ProblemPtr calibrate_r2 (const std::vector<Volatility> &r2, Real meanr2,
 		  OptimizationMethod &method, const EndCriteria &endCriteria,
 		  Real &alpha, Real &beta, Real &omega) {
 	Garch11CostFunction cost (r2);
@@ -353,9 +353,9 @@ namespace QuantLib { namespace Garch {
 	initialGuess2 (acf, meanr2, opt2[1], opt2[2], opt2[0]);
 	Real fCost2 = cost.value(opt2);
 
-	EndCriteria::Type ret = EndCriteria::None;
+	ProblemPtr ret, ret1, ret2;
 	try {
-		ret = calibrate_r2 (r2, method, constraints, endCriteria, opt1, alpha, beta, omega);
+		ret1 = calibrate_r2 (r2, method, constraints, endCriteria, opt1, alpha, beta, omega);
 		opt1[1] = alpha;
 		opt1[2] = beta;
 		opt1[0] = omega;
@@ -363,11 +363,11 @@ namespace QuantLib { namespace Garch {
 		if (constraints.test(opt1) && (fCost = cost.value(opt1)) < fCost1)
 			fCost1 = fCost;
 	} catch (const std::exception &) {
-		// TODO: what to do?
+		fCost1 = QL_MAX_REAL;
 	}
 
 	try {
-		ret = calibrate_r2 (r2, method, constraints, endCriteria, opt2, alpha, beta, omega);
+		ret2 = calibrate_r2 (r2, method, constraints, endCriteria, opt2, alpha, beta, omega);
 		opt2[1] = alpha;
 		opt2[2] = beta;
 		opt2[0] = omega;
@@ -375,22 +375,24 @@ namespace QuantLib { namespace Garch {
 		if (constraints.test(opt2) && (fCost = cost.value(opt2)) < fCost2)
 			fCost2 = fCost;
 	} catch (const std::exception &) {
-		// TODO: what to do?
+		fCost2 = QL_MAX_REAL;
 	}
 
 	if (fCost1 <= fCost2) {
-	  alpha = opt1[1];
-	  beta = opt1[2];
-	  omega = opt1[0];
+		alpha = opt1[1];
+		beta = opt1[2];
+		omega = opt1[0];
+		ret = ret1;
 	} else {
 		alpha = opt2[1];
 		beta = opt2[2];
-	    omega = opt2[0];
+		omega = opt2[0];
+		ret = ret2;
 	}
 	return ret;
   }
 
-  EndCriteria::Type calibrate_r2 (const std::vector<Volatility> &r2,
+  ProblemPtr calibrate_r2 (const std::vector<Volatility> &r2,
 		  OptimizationMethod &method,
 		  const EndCriteria &endCriteria,
 		  const Array &initGuess, Real &alpha, Real &beta, Real &omega) {
@@ -398,19 +400,19 @@ namespace QuantLib { namespace Garch {
 	  return calibrate_r2 (r2, method, constraints, endCriteria, initGuess, alpha, beta, omega);
   }
 
-  EndCriteria::Type calibrate_r2 (const std::vector<Volatility> &r2,
+  ProblemPtr calibrate_r2 (const std::vector<Volatility> &r2,
 		  OptimizationMethod &method,
 		  Constraint &constraints,
 		  const EndCriteria &endCriteria,
 		  const Array &initGuess, Real &alpha, Real &beta, Real &omega) {
 	  Garch11CostFunction cost(r2);
-	  Problem problem (cost, constraints, initGuess);
-	  EndCriteria::Type ret = method.minimize(problem, endCriteria);
-	  const Array &optimum = problem.currentValue();
+	  ProblemPtr problem = ProblemPtr(new Problem(cost, constraints, initGuess));
+	  EndCriteria::Type ret = method.minimize(*problem, endCriteria);
+	  const Array &optimum = problem->currentValue();
 	  alpha = optimum[1];
 	  beta = optimum[2];
 	  omega = optimum[0];
-	  return ret;
+	  return problem;
   }
 
   // class FitAcfProblem : public LeastSquareProblem {
@@ -511,8 +513,7 @@ class Garch2_11Constraint : public Constraint {
 							new Garch2_11Constraint::Impl(varModel))) {}
 };
 
-void initGuess (const std::vector<Volatility> &r1, const std::vector<Volatility> &r2,
-		Array &params) {
+void initGuess (const std::vector<Volatility> &r1, const std::vector<Volatility> &r2, Array &params) {
 	Size n = std::min(r1.size(), r2.size());
 	std::vector<Volatility> vr1(n), vr2(n);
 	std::vector<boost::function1<Volatility, Volatility> > f;
@@ -589,7 +590,6 @@ void initGuess (const std::vector<Volatility> &r1, const std::vector<Volatility>
 	try {
 		calibrate_r2 (vr2, mean2, alpha[1][1], beta[1][1], omega[1]);
 	} catch (const std::exception &) {
-		// TODO: what to do?
 	}
 	model2Params (varModel, params);
 	params[8] = bta * omega[0];
@@ -597,29 +597,26 @@ void initGuess (const std::vector<Volatility> &r1, const std::vector<Volatility>
 	params[10] = beta[0][0];
 }
 
-Real calibrate (const std::vector<Volatility> &r1, const std::vector<Volatility> &r2,
-		Array &params) {
+ProblemPtr calibrate (const std::vector<Volatility> &r1, const std::vector<Volatility> &r2, Array &params) {
 	EndCriteria endCriteria(10000, 500, tol_level2, tol_level2, tol_level2);
 	Simplex method(0.001);
 
 	return calibrate (r1, r2, params, method, endCriteria);
 }
 
-Real calibrate (const std::vector<Volatility> &r1, const std::vector<Volatility> &r2,
+ProblemPtr calibrate (const std::vector<Volatility> &r1, const std::vector<Volatility> &r2,
 		Array &params, OptimizationMethod &method, EndCriteria &endCriteria) {
-	Real res = 0;
+	ProblemPtr res;
 	Garch11Diag varModel(2);
 
 	try {
 		Garch2_11CostFunction cost (r1, r2, varModel);
 		Garch2_11Constraint constraints(varModel);
-		Problem problem (cost, constraints, params);
-		method.minimize(problem, endCriteria);
-		const Array &optimum = problem.currentValue();
+		res = ProblemPtr( new Problem(cost, constraints, params));
+		method.minimize(*res, endCriteria);
+		const Array &optimum = res->currentValue();
 		std::copy (optimum.begin(), optimum.end(), params.begin());
-		res = problem.functionValue();
 	} catch (const std::exception &) {
-		// TODO: what to do?
 	}
 	return res;
 }
