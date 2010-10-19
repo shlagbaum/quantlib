@@ -33,6 +33,7 @@
 #include <ql/math/optimization/endcriteria.hpp>
 #include <ql/errors.hpp>
 #include <vector>
+#include <boost/shared_ptr.hpp>
 
 namespace QuantLib {
 
@@ -40,21 +41,24 @@ namespace QuantLib {
     /*! 
     */
 
+	typedef boost::shared_ptr<Problem> ProblemPtr;
+
 	namespace Garch {
-		EndCriteria::Type calibrate_r2 (const std::vector<Volatility> &r2, Real meanr2,
+
+		ProblemPtr calibrate_r2 (const std::vector<Volatility> &r2, Real meanr2,
 				Real &alpha, Real &beta, Real &omega);
 
-		EndCriteria::Type calibrate_r2 (const std::vector<Volatility> &r2, Real meanr2,
+		ProblemPtr calibrate_r2 (const std::vector<Volatility> &r2, Real meanr2,
 				  OptimizationMethod &method, const EndCriteria &endCriteria,
 				  Real &alpha, Real &beta, Real &omega);
 
-		EndCriteria::Type calibrate_r2 (const std::vector<Volatility> &r2,
+		ProblemPtr calibrate_r2 (const std::vector<Volatility> &r2,
 				  OptimizationMethod &method,
 				  Constraint &constraints,
 				  const EndCriteria &endCriteria,
 				  const Array &initialGuess, Real &alpha, Real &beta, Real &omega);
 
-		EndCriteria::Type calibrate_r2 (const std::vector<Volatility> &r2,
+		ProblemPtr calibrate_r2 (const std::vector<Volatility> &r2,
 				  OptimizationMethod &method,
 				  const EndCriteria &endCriteria,
 				  const Array &initialGuess, Real &alpha, Real &beta, Real &omega);
@@ -73,17 +77,17 @@ namespace QuantLib {
 	}; // namespace Garch
 
 
-    template <class Time = Date>
-    class Garch11T : public VolatilityCompositorTime<Time> {
+    template <class VolatilityCompositor>
+    class Garch11T : public VolatilityCompositor {
     public:
-    	  typedef TimeSeriesBase<Volatility, Time> TimeSeries;
+		  typedef typename VolatilityCompositor::TimeSeries TimeSeries;
     	  typedef typename TimeSeries::const_iterator ts_const_iterator;
     	  typedef typename TimeSeries::value_iterator ts_value_iterator;
 
     	  Garch11T(Real a = 0.0, Real b = 0.0, Real vl = 0.0) :
-    		  alpha_(a), beta_(b), gamma_ (1 - a - b), vl_(vl) {}
+    		  alpha_(a), beta_(b), gamma_ (1 - a - b), vl_(vl), loglikelihood_(0) {}
 
-    	  Garch11T(const TimeSeries& qs) {
+		  Garch11T(const TimeSeries& qs) : alpha_(0), beta_(0), vl_(0), loglikelihood_(0) {
     		  calibrate(qs);
     	  };
 
@@ -94,6 +98,8 @@ namespace QuantLib {
     	  Real omega() const { return vl_ * gamma_; }
 
     	  Real ltVol() const { return vl_; }
+
+		  Real loglikelihood() const { return loglikelihood_; }
 
     	  TimeSeries calculate(const TimeSeries &quoteSeries) {
     		  return calculate(quoteSeries, alpha_, beta_, gamma_* vl_);
@@ -139,9 +145,10 @@ namespace QuantLib {
     	  void calibrate (Iterator begin, Iterator end) {
     		  std::vector<Volatility> r2;
     		  Real meanr2 = Garch::to_r2(begin, end, r2);
-    		  Garch::calibrate_r2 (r2, meanr2, alpha_, beta_, vl_);
+    		  ProblemPtr p = Garch::calibrate_r2 (r2, meanr2, alpha_, beta_, vl_);
     		  gamma_ = 1 - alpha_ - beta_;
     		  vl_ /= gamma_;
+			  loglikelihood_ = p->functionValue();
     	  }
 
     	  template<typename Iterator, class Optimizer, class EndCriteria>
@@ -149,9 +156,10 @@ namespace QuantLib {
     			  EndCriteria endCriteria) {
     		  std::vector<Volatility> r2;
     		  Real meanr2 = Garch::to_r2(begin, end, r2);
-    		  Garch::calibrate_r2 (r2, meanr2, method, endCriteria, alpha_, beta_, vl_);
+    		  ProblemPtr p = Garch::calibrate_r2 (r2, meanr2, method, endCriteria, alpha_, beta_, vl_);
     		  gamma_ = 1 - alpha_ - beta_;
     		  vl_ /= gamma_;
+			  loglikelihood_ = p->functionValue();
     	  }
 
     	  template<typename Iterator, class Optimizer, class EndCriteria>
@@ -159,9 +167,10 @@ namespace QuantLib {
     			  EndCriteria endCriteria, const Array &initialGuess) {
     		  std::vector<Volatility> r2;
     		  Garch::to_r2(begin, end, r2);
-    		  Garch::calibrate_r2 (r2, method, endCriteria, initialGuess, alpha_, beta_, vl_);
+    		  ProblemPtr p = Garch::calibrate_r2 (r2, method, endCriteria, initialGuess, alpha_, beta_, vl_);
     		  gamma_ = 1 - alpha_ - beta_;
     		  vl_ /= gamma_;
+			  loglikelihood_ = p->functionValue();
     	  }
 
     	  Real costFunction(const TimeSeries &quoteSeries, Real alpha = -1, Real beta = -1,
@@ -182,9 +191,10 @@ namespace QuantLib {
     	  }
     private:
         Real alpha_, beta_, gamma_, vl_;
+		Real loglikelihood_;
     };
 
-	typedef Garch11T<Date> Garch11;
+	typedef Garch11T<VolatilityCompositor> Garch11;
 
 // GARCH 2D
 
@@ -216,8 +226,8 @@ namespace Garch {
 			Array &params);
 	void initGuess (const std::vector<Volatility> &r1, const std::vector<Volatility> &r2,
 			Real omega1, Real alpha1, Real beta1, Array &params);
-	Real calibrate (const std::vector<Volatility> &r1, const std::vector<Volatility> &r2, Array &params);
-	Real calibrate (const std::vector<Volatility> &r1, const std::vector<Volatility> &r2,
+	ProblemPtr calibrate (const std::vector<Volatility> &r1, const std::vector<Volatility> &r2, Array &params);
+	ProblemPtr calibrate (const std::vector<Volatility> &r1, const std::vector<Volatility> &r2,
 			Array &params, OptimizationMethod &method, EndCriteria &endCriteria);
 	Disposable<Matrix> forecast (const Array &r, const Matrix &cov, const Garch11Diag &varModel,
 			Real omegaCov, Real alphaCov, Real betaCov);
@@ -235,17 +245,20 @@ public:
 	  typedef TimeSeriesBase<Volatility, Time> TimeSeries;
 	  typedef typename TimeSeries::const_iterator ts_const_iterator;
 	  typedef typename TimeSeries::value_iterator ts_value_iterator;
+	  typedef Garch11T< VolatilityCompositorTime <Time> > Garch11;
 
-	  Garch2_11() : varModel_(2), covModel_()  {
+	  Garch2_11() : varModel_(2), covModel_(), loglikelihood_(0)  {
 	  }
 
-	  Garch2_11(const Garch11Diag & varModel, const Garch11T<Time> & covarModel) :
-		  varModel_(varModel), covModel_(covarModel)  {
+	  Garch2_11(const Garch11Diag & varModel, const Garch11 & covarModel) :
+		  varModel_(varModel), covModel_(covarModel), loglikelihood_(0)  {
 	  }
 
 	  const Garch11Diag & diagModel() const { return varModel_; }
 
-	  const Garch11T<Time> & covarModel() const { return covModel_; }
+	  const Garch11 & covarModel() const { return covModel_; }
+
+	  Real loglikelihood() const { return loglikelihood_; }
 
 	  Disposable<Matrix> ltVol() const {
 		  Matrix I(2, 2, 0.0);
@@ -256,12 +269,12 @@ public:
 		  return Garch::calcCovMtx (g, beta);
 	  }
 
-	  Real calibrate (const TimeSeries &r1, const TimeSeries &r2) {
+	  ProblemPtr calibrate (const TimeSeries &r1, const TimeSeries &r2) {
 		  return calibrate (r1.begin_values(), r1.end_values(), r2.begin_values(), r2.end_values());
 	  }
 
 	  template <typename Iterator1, typename Iterator2>
-	  Real calibrate (Iterator1 begin1, Iterator1 end1, Iterator2 begin2, Iterator2 end2) {
+	  ProblemPtr calibrate (Iterator1 begin1, Iterator1 end1, Iterator2 begin2, Iterator2 end2) {
 		  std::vector<Volatility> vr1(std::distance(begin1, end1));
 		  std::vector<Volatility> vr2(std::distance(begin2, end2));
 		  std::copy (begin1, end1, vr1.begin());
@@ -270,7 +283,7 @@ public:
 	  }
 
 	  template <typename Iterator1, typename Iterator2>
-	  Real calibrate (Iterator1 begin1, Iterator1 end1, Iterator2 begin2, Iterator2 end2,
+	  ProblemPtr calibrate (Iterator1 begin1, Iterator1 end1, Iterator2 begin2, Iterator2 end2,
 			  OptimizationMethod &method, EndCriteria &endCriteria) {
 		  std::vector<Volatility> vr1(std::distance(begin1, end1));
 		  std::vector<Volatility> vr2(std::distance(begin2, end2));
@@ -279,28 +292,29 @@ public:
 		  return calibrate(vr1, vr2, method, endCriteria);
 	  }
 
-	  Real calibrate (const std::vector<Volatility> &r1, const std::vector<Volatility> &r2) {
+	  ProblemPtr calibrate (const std::vector<Volatility> &r1, const std::vector<Volatility> &r2) {
 			Array params(11, 0.0);
 			Garch::initGuess (r1, r2, params);
-			Real res = Garch::calibrate (r1, r2, params);
+			loglikelihood_ = Garch::calibrate (r1, r2, params);
 			Garch::params2Model (params, varModel_);
-			covModel_ = Garch11T<Time>(params[9], params[10], params[8] / (1-params[9]-params[10]));
-			return res;
+			covModel_ = Garch11(params[9], params[10], params[8] / (1-params[9]-params[10]));
+			return loglikelihood_;
 	  }
 
-	  Real calibrate (const std::vector<Volatility> &r1, const std::vector<Volatility> &r2,
+	  ProblemPtr calibrate (const std::vector<Volatility> &r1, const std::vector<Volatility> &r2,
 			  OptimizationMethod &method, EndCriteria &endCriteria) {
 			Array params(11, 0.0);
 			Garch::initGuess (r1, r2, params);
-			Real res = Garch::calibrate (r1, r2, params, method, endCriteria);
+			ProblemPtr res = Garch::calibrate (r1, r2, params, method, endCriteria);
+			loglikelihood_ = res->functionValue();
 			Garch::params2Model (params, varModel_);
-			covModel_ = Garch11<Time>(params[9], params[10], params[8] / (1-params[9]-params[10]));
+			covModel_ = Garch11(params[9], params[10], params[8] / (1-params[9]-params[10]));
 			return res;
 	  }
 
 	  template <typename Iterator1, typename Iterator2>
-	  Real calibrate (Iterator1 begin1, Iterator1 end1, Iterator2 begin2, Iterator2 end2,
-			  const Garch11T<Time> &model1) {
+	  ProblemPtr calibrate (Iterator1 begin1, Iterator1 end1, Iterator2 begin2, Iterator2 end2,
+			  const Garch11 &model1) {
 		  std::vector<Volatility> vr1(std::distance(begin1, end1));
 		  std::vector<Volatility> vr2(std::distance(begin2, end2));
 		  std::copy (begin1, end1, vr1.begin());
@@ -309,8 +323,8 @@ public:
 	  }
 
 	  template <typename Iterator1, typename Iterator2>
-	  Real calibrate (Iterator1 begin1, Iterator1 end1, Iterator2 begin2, Iterator2 end2,
-			  const Garch11T<Time> &model1, OptimizationMethod &method, EndCriteria &endCriteria) {
+	  ProblemPtr calibrate (Iterator1 begin1, Iterator1 end1, Iterator2 begin2, Iterator2 end2,
+			  const Garch11 &model1, OptimizationMethod &method, EndCriteria &endCriteria) {
 		  std::vector<Volatility> vr1(std::distance(begin1, end1));
 		  std::vector<Volatility> vr2(std::distance(begin2, end2));
 		  std::copy (begin1, end1, vr1.begin());
@@ -318,24 +332,26 @@ public:
 		  return calibrate(vr1, vr2, model1, method, endCriteria);
 	  }
 
-	  Real calibrate (const std::vector<Volatility> &r1, const std::vector<Volatility> &r2,
-			  const Garch11T<Time> &model1) {
+	  ProblemPtr calibrate (const std::vector<Volatility> &r1, const std::vector<Volatility> &r2,
+			  const Garch11 &model1) {
 			Array params(11, 0.0);
 			Garch::initGuess (r1, r2, model1.omega(), model1.alpha(), model1.beta(), params);
-			Real res = Garch::calibrate (r1, r2, params);
+			ProblemPtr res = Garch::calibrate (r1, r2, params);
+			loglikelihood_ = res->functionValue();
 			Garch::params2Model (params, varModel_);
-			covModel_ = Garch11T<Time>(params[9], params[10], params[8] / (1-params[9]-params[10]));
+			covModel_ = Garch11(params[9], params[10], params[8] / (1-params[9]-params[10]));
 			return res;
 	  }
 
-	  Real calibrate (const std::vector<Volatility> &r1, const std::vector<Volatility> &r2,
-			  const Garch11T<Time> &model1, OptimizationMethod &method, EndCriteria &endCriteria) {
+	  ProblemPtr calibrate (const std::vector<Volatility> &r1, const std::vector<Volatility> &r2,
+			  const Garch11 &model1, OptimizationMethod &method, EndCriteria &endCriteria) {
 			Array params(11, 0.0);
 			Garch::initGuess (r1, r2, model1.omega(), model1.alpha(), model1.beta(), params);
-			Real res = Garch::calibrate (r1, r2, params, method, endCriteria);
+			ProblemPtr res = Garch::calibrate (r1, r2, params, method, endCriteria);
+			loglikelihood_ = res->functionValue();
 			Garch::params2Model (params, varModel_);
-			covModel_ = Garch11T<Time>(params[9], params[10], params[8] / (1-params[9]-params[10]));
-			return res;
+			covModel_ = Garch11(params[9], params[10], params[8] / (1-params[9]-params[10]));
+			return loglikelihood_;
 	  }
 
 	  Disposable<Matrix> forecast (const Array &r, const Matrix &cov) const {
@@ -344,7 +360,8 @@ public:
 
 private:
 	Garch11Diag varModel_;
-	Garch11T<Time> covModel_;
+	Garch11 covModel_;
+	Real loglikelihood_;
 };
 
 } // namespace QuantLib
