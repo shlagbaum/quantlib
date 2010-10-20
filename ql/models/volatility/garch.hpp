@@ -18,770 +18,363 @@
  FOR A PARTICULAR PURPOSE.  See the license for more details.
 */
 
-#include <boost/bind.hpp>
-#include <boost/foreach.hpp>
-#include <ql/models/volatility/garch.hpp>
+/*! \file garch.hpp
+    \brief GARCH volatility model
+*/
+
+#ifndef quantlib_garch_volatility_model_hpp
+#define quantlib_garch_volatility_model_hpp
+
+#include <ql/volatilitymodel.hpp>
 #include <ql/math/array.hpp>
-#include <ql/math/optimization/costfunction.hpp>
+#include <ql/math/matrix.hpp>
+#include <ql/math/optimization/constraint.hpp>
 #include <ql/math/optimization/problem.hpp>
-#include <ql/math/optimization/simplex.hpp>
-#include <ql/math/optimization/leastsquare.hpp>
-#include <ql/math/linearleastsquaresregression.hpp>
-#include <ql/math/functional.hpp>
-#include <ql/math/solvers1d/brent.hpp>
-#include <ql/experimental/math/autocovariance.hpp>
+#include <ql/math/optimization/endcriteria.hpp>
 #include <ql/errors.hpp>
-#include <ql/qldefines.hpp>
+#include <vector>
+#include <boost/shared_ptr.hpp>
 
-namespace QuantLib { namespace Garch {
+namespace QuantLib {
 
-	const Real tol_level = 1.0e-8;
+    //! GARCH volatility model
+    /*! 
+    */
 
-	class Garch11CostFunction : public CostFunction {
-	public:
-		Garch11CostFunction (const std::vector<Volatility> &);
-		virtual Real value(const Array& x) const;
-		virtual Disposable<Array> values(const Array& x) const;
-		virtual void gradient(Array& grad, const Array& x) const;
-		virtual Real valueAndGradient(Array& grad, const Array& x) const;
-	private:
-		const std::vector<Volatility> &r2_;
-	};
+	typedef boost::shared_ptr<Problem> ProblemPtr;
 
-	class Garch11Constraint : public Constraint {
-	  private:
-		class Impl : public Constraint::Impl {
-			Real gammaLower_, gammaUpper_;
-		  public:
-			  Impl (Real gammaLower, Real gammaUpper) : gammaLower_(gammaLower), gammaUpper_(gammaUpper) {
-			  }
-			bool test(const Array &x) const {
-		      QL_REQUIRE(x.size() >= 3, "size of parameters vector < 3");
-		      return x[0] > 0 && x[1] >= 0 && x[2] >= 0 && x[1] + x[2] < gammaUpper_ && x[1] + x[2] >= gammaLower_;
+	namespace Garch {
+
+		ProblemPtr calibrate_r2 (const std::vector<Volatility> &r2, Real meanr2,
+				Real &alpha, Real &beta, Real &omega);
+
+		ProblemPtr calibrate_r2 (const std::vector<Volatility> &r2, Real meanr2,
+				  OptimizationMethod &method, const EndCriteria &endCriteria,
+				  Real &alpha, Real &beta, Real &omega);
+
+		ProblemPtr calibrate_r2 (const std::vector<Volatility> &r2,
+				  OptimizationMethod &method,
+				  Constraint &constraints,
+				  const EndCriteria &endCriteria,
+				  const Array &initialGuess, Real &alpha, Real &beta, Real &omega);
+
+		ProblemPtr calibrate_r2 (const std::vector<Volatility> &r2,
+				  OptimizationMethod &method,
+				  const EndCriteria &endCriteria,
+				  const Array &initialGuess, Real &alpha, Real &beta, Real &omega);
+
+		template<typename Iterator>
+		Real to_r2 (Iterator begin, Iterator end, std::vector<Volatility> &r2) {
+			Real u2(0.0), meanr2(0.0), w(1.0);
+			for (; begin != end; ++begin) {
+				u2 = *begin; u2 *= u2;
+				meanr2 = (1.0 - w) * meanr2 + w * u2;
+				r2.push_back(u2);
+				w /= (w + 1.0);
 			}
-		};
-	  public:
-		  Garch11Constraint(Real gammaLower, Real gammaUpper) : Constraint(boost::shared_ptr<Constraint::Impl>(
-												   new Garch11Constraint::Impl(gammaLower, gammaUpper))) {}
-	};
+			return meanr2;
+		}
+	}; // namespace Garch
 
-  Garch11CostFunction::Garch11CostFunction (const std::vector<Volatility> &r2) : r2_(r2) {
 
-  }
-
-  Real Garch11CostFunction::value(const Array& x) const {
-  	  Real retval(0.0);
-  	  Real sigma2 = 0;
-  	  Real u2 = 0;
-  	  BOOST_FOREACH (Volatility r2, r2_) {
-  		  sigma2 = x[0] + x[1] * u2 + x[2] * sigma2;
-  		  u2 = r2;
-  		  retval += std::log(sigma2) + u2 / sigma2;
-  	  }
-  	  return retval / (2.0*r2_.size());
-  }
-
-  Disposable<Array> Garch11CostFunction::values(const Array& x) const {
-      Array retval (r2_.size());
-  	  Real sigma2 = 0;
-  	  Real u2 = 0;
-  	  Size i = 0;
-  	  BOOST_FOREACH (Volatility r2, r2_) {
-  		  sigma2 = x[0] + x[1] * u2 + x[2] * sigma2;
-  		  u2 = r2;
-  		  retval[i++] = (std::log(sigma2) + u2 / sigma2)/(2.0*r2_.size());
-  	  }
-  	  return retval;
-  }
-
-  void Garch11CostFunction::gradient(Array& grad, const Array& x) const {
-  	  std::fill (grad.begin(), grad.end(), 0.0);
-  	  Real sigma2 = 0;
-  	  Real u2 = 0;
-  	  Real sigma2prev = sigma2;
-  	  Real u2prev = u2;
-  	  Real norm = 2.0 * r2_.size();
-  	  BOOST_FOREACH (Volatility r2, r2_) {
-  	    sigma2 = x[0] + x[1] * u2 + x[2] * sigma2;
-  	    u2 = r2;
-  	    Real w = (sigma2 - u2) / (sigma2*sigma2);
-  	    grad[0] += w;
-  	    grad[1] += u2prev * w;
-  	    grad[2] += sigma2prev * w;
-  	    u2prev = u2;
-  	    sigma2prev = sigma2;
-  	  }
-  	  std::transform(grad.begin(), grad.end(), grad.begin(),
-  			  std::bind2nd(std::divides<Real>(), norm));
-  }
-
-  Real Garch11CostFunction::valueAndGradient(Array& grad, const Array& x) const {
-  	  std::fill (grad.begin(), grad.end(), 0.0);
-  	  Real retval(0.0);
-  	  Real sigma2 = 0;
-  	  Real u2 = 0;
-  	  Real sigma2prev = sigma2;
-  	  Real u2prev = u2;
-  	  Real norm = 2.0 * r2_.size();
-  	  BOOST_FOREACH (Volatility r2, r2_) {
-  	    sigma2 = x[0] + x[1] * u2 + x[2] * sigma2;
-  	    u2 = r2;
-  	    retval += std::log(sigma2) + u2 / sigma2;
-  	    Real w = (sigma2 - u2) / (sigma2*sigma2);
-  	    grad[0] += w;
-  	    grad[1] += u2prev * w;
-  	    grad[2] += sigma2prev * w;
-  	    u2prev = u2;
-  	    sigma2prev = sigma2;
-  	  }
-  	  std::transform(grad.begin(), grad.end(), grad.begin(),
-  			  std::bind2nd(std::divides<Real>(), norm));
-  	  return retval / norm;
-  }
-
-  class FitAcfProblem : public LeastSquareProblem {
-  public:
-  	FitAcfProblem(Real A2, const Array &acf, const std::vector<size_t> &idx);
-  	virtual Size size();
-  	virtual void targetAndValue(const Array& x, Array& target, Array& fct2fit);
-  	virtual void targetValueAndGradient(const Array& x, Matrix& grad_fct2fit, Array& target, Array& fct2fit);
-  private:
-  	Real A2_;
-  	Array acf_;
-  	std::vector<size_t> idx_;
-  };
-
-  class FitAcfConstraint : public Constraint {
-    private:
-  	class Impl : public Constraint::Impl {
-  		Real gammaLower_, gammaUpper_;
-  	  public:
-  		Impl(Real gammaLower, Real gammaUpper) : gammaLower_(gammaLower), gammaUpper_(gammaUpper) {
-
-  		}
-  		bool test(const Array &x) const {
-  	      QL_REQUIRE(x.size() >= 2, "size of parameters vector < 2");
-  	      return x[0] >= gammaLower_ && x[0] < gammaUpper_ && x[1] >= 0 && x[1] <= x[0];
-  		}
-  	};
+    template <class VolatilityCompositor>
+    class Garch11T : public VolatilityCompositor {
     public:
-  	  FitAcfConstraint(Real gammaLower, Real gammaUpper) :
-  		  Constraint(boost::shared_ptr<Constraint::Impl>(
-  			new FitAcfConstraint::Impl(gammaLower, gammaUpper))) {}
-  };
+		  typedef typename VolatilityCompositor::time_series TimeSeries;
+    	  typedef typename TimeSeries::const_iterator ts_const_iterator;
+    	  typedef typename TimeSeries::const_value_iterator ts_value_iterator;
 
-  Real fGamma (Real gamma, Real A, Real B) {
-  	Real beta = gamma * (1 - A) - B;
-  	return 3*A*(1 - gamma*gamma) - 1 + 3*gamma*gamma + 2*beta*beta - 4*beta*gamma;
-  }
+    	  Garch11T(Real a = 0.0, Real b = 0.0, Real vl = 0.0) :
+    		  alpha_(a), beta_(b), gamma_ (1 - a - b), vl_(vl), loglikelihood_(0) {}
 
-  // Initial guess based on fitting ACF - initial guess for fitting acf is
-  // a moment matching estimates for mean(r2), acf(0), and acf(1).
-  Real initialGuess1 (const Array &acf, Real meanr2, Real &alpha, Real &beta, Real &omega) {
-    Real A21 = acf[1];
-    Real A4 = acf[0] + meanr2*meanr2;
+		  Garch11T(const TimeSeries& qs) : alpha_(0), beta_(0), vl_(0), loglikelihood_(0) {
+    		  calibrate(qs);
+    	  };
 
-    Real A = meanr2*meanr2/A4; // 1/sigma^2
-    Real B = A21 / A4; // rho(1)
+    	  Real alpha() const { return alpha_; }
 
-    Real gammaLower = A <= 1./3. - tol_level ? std::sqrt((1 - 3*A)/(3 - 3*A)) + tol_level : tol_level;
-	Garch11Constraint constraints(gammaLower, 1.0 - tol_level);
+    	  Real beta() const { return beta_; }
 
-    //Real fGamma0 = fGamma (0, B4, B21);
-    //Real fGammaLower = fGamma (gammaLower, B4, B21);
-    //Real fGamma1 = fGamma (1.0, B4, B21);
-    Real gamma = gammaLower + (1 - gammaLower) * 0.5;
-    beta = std::min(gamma, std::max(gamma * (1 - A) - B, 0.0));
-    alpha = gamma - beta;
-    omega = meanr2 * (1 - gamma);
+    	  Real omega() const { return vl_ * gamma_; }
 
-    if (std::fabs(A-0.5) < QL_EPSILON) {
-    	gamma = std::max(gammaLower, -(1+4*B*B)/(4*B));
-    	beta = std::min(gamma, std::max(gamma * (1 - A) - B, 0.0));
-        alpha = gamma - beta;
-        omega = meanr2 * (1 - gamma);
-    } else
-    if (A > 1.0 - QL_EPSILON) {
-    	gamma = std::max(gammaLower, -(1+B*B)/(2*B));
-    	beta = std::min(gamma, std::max(gamma * (1 - A) - B, 0.0));
-        alpha = gamma - beta;
-        omega = meanr2 * (1 - gamma);
-    } else {
-		Real D = (3*A-1)*(2*B*B+(1-A)*(2*A-1));
-		if (D >= 0) {
-			Real d = std::sqrt(D);
-			Real b = (B - d)/(2*A-1);
-			Real g = 0;
-			if (b >= tol_level && b <= 1.0 - tol_level) {
-				g = (b + B) / (1 - A);
-			}
-			if (g < gammaLower) {
-				b = (B + d)/(2*A-1);
-				if (b >= tol_level && b <= 1.0 - tol_level) {
-					g = (b + B) / (1 - A);
-				}
-			}
-			if (g >= gammaLower) {
-				gamma = g;
-		    	beta = std::min(gamma, std::max(gamma * (1 - A) - B, 0.0));
-		        alpha = gamma - beta;
-		        omega = meanr2 * (1 - gamma);
-			}
-		}
-    }
+    	  Real ltVol() const { return vl_; }
 
-    std::vector<size_t> idx;
-    size_t nCov = acf.size() - 1;
-    for (size_t i = 0; i <= nCov; ++i) {
-  	  if (i < 2 || i > 1 && acf[i] > 0 && acf[i-1] > 0 && acf[i-1] > acf[i]) {
-  		  idx.push_back(i);
-  	  }
-    }
+		  Real loglikelihood() const { return loglikelihood_; }
 
-    Array x(2);
-    x[0] = gamma;
-    x[1] = beta;
+    	  TimeSeries calculate(const TimeSeries &quoteSeries) {
+    		  return calculate(quoteSeries, alpha_, beta_, gamma_* vl_);
+    	  }
 
-    try {
-		FitAcfConstraint c(gammaLower, 1.0 - tol_level);
-		NonLinearLeastSquare nnls(c);
-		nnls.setInitialValue(x);
-		FitAcfProblem pr(meanr2, acf, idx);
-		x = nnls.perform(pr);
-		Array guess(3);
-		guess[0] = meanr2 * (1 - x[0]);
-		guess[1] = x[0] - x[1];
-		guess[2] = x[1];
-		if (constraints.test(guess)) {
-			omega = guess[0];
-			alpha = guess[1];
-			beta = guess[2];
-		}
-    } catch (const std::exception &) {
-    	// failed -- returning initial values
-    }
-    return gammaLower;
-  }
+    	  static TimeSeries
+    	  calculate(const TimeSeries &quoteSeries, Real alpha, Real beta, Real omega) {
+    		  TimeSeries retval;
+    		  ts_const_iterator cur = quoteSeries.begin();
+			  Real u = cur->second;
+    		  Real sigma2 = u*u;
+    		  retval[cur->first] = std::sqrt(sigma2);
+    		  ++cur;
+    		  while (cur != quoteSeries.end()) {
+    			  sigma2 = omega + alpha * u * u + beta * sigma2;
+    			  retval[cur->first] = std::sqrt(sigma2);
+    			  u = cur->second;
+    			  ++cur;
+    		  }
+    		  return retval;
+    	  }
 
-  // Initial guess based on fitting ACF - initial guess for fitting acf is
-  // an estimate of gamma = alpfa+beta based on the fact: acf(i+1) = gamma*acf(i) for i > 1.
-  Real initialGuess2 (const Array &acf, Real meanr2, Real &alpha, Real &beta, Real &omega) {
-    Real A21 = acf[1];
-    Real A4 = acf[0] + meanr2*meanr2;
-    Real A = meanr2*meanr2/A4; // 1/sigma^2
-    Real B = A21 / A4; // rho(1)
-    Real gammaLower = A <= 1./3. - tol_level ? std::sqrt((1 - 3*A)/(3 - 3*A)) + tol_level : tol_level;
-	Garch11Constraint constraints(gammaLower, 1.0 - tol_level);
+    	  Real forecast (Real r, Real sigma2) const {
+    		  return gamma_* vl_ + alpha_ * r * r + beta_ * sigma2;
+    	  }
 
-    // ACF
-    Real gamma = 0;
-    size_t nn = 0;
-    std::vector<size_t> idx;
-    size_t nCov = acf.size() - 1;
-    for (size_t i = 0; i <= nCov; ++i) {
-  	  if (i < 2) idx.push_back(i);
-  	  if (i > 1 && acf[i] > 0 && acf[i-1] > 0 && acf[i-1] > acf[i]) {
-  		  gamma += acf[i]/acf[i-1];
-  		  nn++;
-  		  idx.push_back(i);
-  	  }
-    }
-    if (nn > 0)
-    	gamma /= nn;
-    if (gamma < gammaLower) gamma = gammaLower;
-    beta = std::min(gamma, std::max(gamma * (1 - A) - B, 0.0));
-    omega = meanr2 * (1 - gamma);
+    	  void calibrate(const TimeSeries &quoteSeries) {
+    		  calibrate (quoteSeries.cbegin_values(), quoteSeries.cend_values());
+    	  }
 
-    Array x(2);
-    x[0] = gamma;
-    x[1] = beta;
+    	  void calibrate(const TimeSeries &quoteSeries,
+        		OptimizationMethod &method, const EndCriteria &endCriteria) {
+    		  calibrate (quoteSeries.cbegin_values(), quoteSeries.cend_values(), method, endCriteria);
+    	  }
 
-    try {
-		FitAcfConstraint c(gammaLower, 1 - tol_level);
-		NonLinearLeastSquare nnls(c);
-		nnls.setInitialValue(x);
-		FitAcfProblem pr(meanr2, acf, idx);
-		x = nnls.perform(pr);
-		Array guess(3);
-		guess[0] = meanr2 * (1 - x[0]);
-		guess[1] = x[0] - x[1];
-		guess[2] = x[1];
-		if (constraints.test(guess)) {
-			omega = guess[0];
-			alpha = guess[1];
-			beta = guess[2];
-		}
-    } catch (const std::exception &) {
-    	// failed -- returning initial values
-    }
-    return gammaLower;
-  }
+    	  void calibrate(const TimeSeries &quoteSeries,
+        		OptimizationMethod &method, const EndCriteria &endCriteria,
+        		const Array &initialGuess) {
+    		  calibrate (quoteSeries.cbegin_values(), quoteSeries.cend_values(), method, endCriteria, initialGuess);
+    	  }
 
-  ProblemPtr calibrate_r2 (const std::vector<Volatility> &r2, Real meanr2,
-		  Real &alpha, Real &beta, Real &omega) {
-	EndCriteria endCriteria(10000, 500, tol_level, tol_level, tol_level);
-	Simplex method(0.001);
-    return calibrate_r2 (r2, meanr2, method, endCriteria, alpha, beta, omega);
-  }
+    	  template<typename Iterator>
+    	  void calibrate (Iterator begin, Iterator end) {
+    		  std::vector<Volatility> r2;
+    		  Real meanr2 = Garch::to_r2(begin, end, r2);
+    		  ProblemPtr p = Garch::calibrate_r2 (r2, meanr2, alpha_, beta_, vl_);
+    		  gamma_ = 1 - alpha_ - beta_;
+    		  vl_ /= gamma_;
+			  loglikelihood_ = p->functionValue();
+    	  }
 
-  ProblemPtr calibrate_r2 (const std::vector<Volatility> &r2, Real meanr2,
-		  OptimizationMethod &method, const EndCriteria &endCriteria,
-		  Real &alpha, Real &beta, Real &omega) {
-	Garch11CostFunction cost (r2);
-	Real dataSize = Real(r2.size());
-	alpha = 0.0;
-	beta = 0.0;
-	omega = 0.0;
-	QL_REQUIRE (dataSize >= 4, "Data series is too short to fit GARCH model");
-	QL_REQUIRE (meanr2 > 0, "Data series is constant");
-	omega = meanr2 * dataSize / (dataSize - 1);
-	// ACF
-	Size maxLag = (Size)std::sqrt(dataSize);
-	Array acf(maxLag+1);
-	std::vector<Volatility> tmp(r2.size());
-	std::transform (r2.begin(), r2.end(), tmp.begin(), std::bind2nd(std::minus<double>(), meanr2));
-	autocovariances (tmp.begin(), tmp.end(), acf.begin(), maxLag);
-	QL_REQUIRE (acf[0] > 0, "Data series is constant");
+    	  template<typename Iterator, class Optimizer, class EndCriteria>
+    	  void calibrate (Iterator begin, Iterator end, Optimizer &method,
+    			  EndCriteria endCriteria) {
+    		  std::vector<Volatility> r2;
+    		  Real meanr2 = Garch::to_r2(begin, end, r2);
+    		  ProblemPtr p = Garch::calibrate_r2 (r2, meanr2, method, endCriteria, alpha_, beta_, vl_);
+    		  gamma_ = 1 - alpha_ - beta_;
+    		  vl_ /= gamma_;
+			  loglikelihood_ = p->functionValue();
+    	  }
 
-	// 2 initial guesses based on fitting ACF
-	Array opt1(3);
-	Real gammaLower = initialGuess1 (acf, meanr2, opt1[1], opt1[2], opt1[0]);
-	Garch11Constraint constraints(gammaLower, 1.0 - tol_level);
-	Real fCost1 = cost.value(opt1);
+    	  template<typename Iterator, class Optimizer, class EndCriteria>
+    	  void calibrate (Iterator begin, Iterator end, Optimizer &method,
+    			  EndCriteria endCriteria, const Array &initialGuess) {
+    		  std::vector<Volatility> r2;
+    		  Garch::to_r2(begin, end, r2);
+    		  ProblemPtr p = Garch::calibrate_r2 (r2, method, endCriteria, initialGuess, alpha_, beta_, vl_);
+    		  gamma_ = 1 - alpha_ - beta_;
+    		  vl_ /= gamma_;
+			  loglikelihood_ = p->functionValue();
+    	  }
 
-	Array opt2(3);
-	initialGuess2 (acf, meanr2, opt2[1], opt2[2], opt2[0]);
-	Real fCost2 = cost.value(opt2);
+    	  Real costFunction(const TimeSeries &quoteSeries, Real alpha = -1, Real beta = -1,
+    			  Real omega = -1) const {
+    		  if (alpha < 0) alpha = alpha_;
+    		  if (beta < 0) beta = beta_;
+    		  if (omega < 0) omega = vl_ * gamma_;
 
-	ProblemPtr ret, ret1, ret2;
-	try {
-		ret1 = calibrate_r2 (r2, method, constraints, endCriteria, opt1, alpha, beta, omega);
-		opt1[1] = alpha;
-		opt1[2] = beta;
-		opt1[0] = omega;
-		double fCost = QL_MAX_REAL;
-		if (constraints.test(opt1) && (fCost = cost.value(opt1)) < fCost1)
-			fCost1 = fCost;
-	} catch (const std::exception &) {
-		fCost1 = QL_MAX_REAL;
-	}
+    	      Real retval(0.0);
+    	      ts_value_iterator it = quoteSeries.begin_values();
+    	      Real u2(0.0), sigma2(0.0);
+    	      for (; it != quoteSeries.end_values(); ++it) {
+    	          sigma2 = omega + alpha * u2 + beta * sigma2;
+    	          u2 = *it; u2 *= u2;
+    	          retval += std::log(sigma2) + u2 / sigma2;
+    	      }
+    	      return retval / (2*quoteSeries.size());
+    	  }
+    private:
+        Real alpha_, beta_, gamma_, vl_;
+		Real loglikelihood_;
+    };
 
-	try {
-		ret2 = calibrate_r2 (r2, method, constraints, endCriteria, opt2, alpha, beta, omega);
-		opt2[1] = alpha;
-		opt2[2] = beta;
-		opt2[0] = omega;
-		double fCost = QL_MAX_REAL;
-		if (constraints.test(opt2) && (fCost = cost.value(opt2)) < fCost2)
-			fCost2 = fCost;
-	} catch (const std::exception &) {
-		fCost2 = QL_MAX_REAL;
-	}
+	typedef Garch11T<VolatilityCompositor> Garch11;
 
-	if (fCost1 <= fCost2) {
-		alpha = opt1[1];
-		beta = opt1[2];
-		omega = opt1[0];
-		ret = ret1;
-	} else {
-		alpha = opt2[1];
-		beta = opt2[2];
-		omega = opt2[0];
-		ret = ret2;
-	}
-	return ret;
-  }
+	template <class Time>
+	class Garch11Time : public Garch11T< VolatilityCompositorTime<Time> > {
+		typedef Garch11T< VolatilityCompositorTime<Time> > _Super;
+	public:
+		typedef typename _Super::TimeSeries TimeSeries;
 
-  ProblemPtr calibrate_r2 (const std::vector<Volatility> &r2,
-		  OptimizationMethod &method,
-		  const EndCriteria &endCriteria,
-		  const Array &initGuess, Real &alpha, Real &beta, Real &omega) {
-	  Garch11Constraint constraints(0.0, 1.0 - tol_level);
-	  return calibrate_r2 (r2, method, constraints, endCriteria, initGuess, alpha, beta, omega);
-  }
-
-  ProblemPtr calibrate_r2 (const std::vector<Volatility> &r2,
-		  OptimizationMethod &method,
-		  Constraint &constraints,
-		  const EndCriteria &endCriteria,
-		  const Array &initGuess, Real &alpha, Real &beta, Real &omega) {
-	  Garch11CostFunction cost(r2);
-	  ProblemPtr problem = ProblemPtr(new Problem(cost, constraints, initGuess));
-	  EndCriteria::Type ret = method.minimize(*problem, endCriteria);
-	  const Array &optimum = problem->currentValue();
-	  alpha = optimum[1];
-	  beta = optimum[2];
-	  omega = optimum[0];
-	  return problem;
-  }
-
-  // class FitAcfProblem : public LeastSquareProblem {
-  FitAcfProblem::FitAcfProblem(Real A2, const Array &acf, const std::vector<size_t> &idx) :
-  	A2_(A2), acf_(acf), idx_(idx) {
-  }
-
-  Size FitAcfProblem::size() { return idx_.size(); }
-
-  void FitAcfProblem::targetAndValue(const Array& x, Array& target, Array& fct2fit) {
-  	Real A4 = acf_[0] + A2_*A2_;
-  	Real gamma = x[0];
-  	Real beta = x[1];
-  	target[0] = A2_*A2_/A4;
-  	fct2fit[0] = (1 - 3*gamma*gamma - 2*beta*beta + 4*beta*gamma) / (3*(1 - gamma*gamma));
-  	target[1] = acf_[1] / A4;
-  	fct2fit[1] = gamma * (1 - fct2fit[0]) - beta;
-  	for (size_t i = 2; i < idx_.size(); ++i) {
-  		target[i] = acf_[idx_[i]] / A4;
-  		fct2fit[i] = std::pow(gamma, (int)idx_[i]-1)* fct2fit[1];
-  	}
-  }
-
-  void FitAcfProblem::targetValueAndGradient(const Array& x, Matrix& grad_fct2fit, Array& target, Array& fct2fit) {
-  	Real A4 = acf_[0] + A2_*A2_;
-  	Real gamma = x[0];
-  	Real beta = x[1];
-  	target[0] = A2_*A2_/A4;
-  	Real w1 = (1 - 3*gamma*gamma - 2*beta*beta + 4*beta*gamma);
-  	Real w2 = (1 - gamma*gamma);
-  	fct2fit[0] = w1 / (3*w2);
-  	grad_fct2fit[0][0] = (2.0/3.0) * ((2*beta-3*gamma)*w2 + 2*w1*gamma) / (w2*w2);
-  	grad_fct2fit[0][1] = (4.0/3.0) * (gamma - beta) / w2;
-  	target[1] = acf_[1] / A4;
-  	fct2fit[1] = gamma * (1 - fct2fit[0]) - beta;
-  	grad_fct2fit[1][0] = (1 - fct2fit[0]) - gamma * grad_fct2fit[0][0];
-  	grad_fct2fit[1][1] = -gamma * grad_fct2fit[0][1] - 1;
-  	for (size_t i = 2; i < idx_.size(); ++i) {
-  		target[i] = acf_[idx_[i]] / A4;
-  		w1 = std::pow(gamma, (int)idx_[i]-1);
-  		fct2fit[i] = w1 * fct2fit[1];
-  		grad_fct2fit[i][0] = (idx_[i]-1) * (w1/gamma)*fct2fit[1] + w1*grad_fct2fit[1][0];
-  		grad_fct2fit[i][1] = w1 * grad_fct2fit[1][1];
-  	}
-  }
-
-// GARCH(1, 1) 2D
-const Real tol_level2 = 1.0e-6;
-
-class Garch2_11CostFunction : public CostFunction {
-public:
-	Garch2_11CostFunction (const std::vector<Volatility> &r1, const std::vector<Volatility> &r2,
-			Garch11Diag &varModel);
-	virtual Real value(const Array& x) const;
-	virtual Disposable<Array> values(const Array& x) const;
-	virtual void gradient(Array& grad, const Array& x) const;
-	virtual Real valueAndGradient(Array& grad, const Array& x) const;
-private:
-	friend class Garch2_11Constraint;
-	const std::vector<Volatility> &r1_;
-	const std::vector<Volatility> &r2_;
-	Garch11Diag &varModel_;
-	Size size_;
-};
-
-class Garch2_11Constraint : public Constraint {
-  private:
-	class Impl : public Constraint::Impl {
-		Garch11Diag &varModel_;
-	  public:
-		  Impl (Garch11Diag &varModel) : varModel_(varModel) {
-		  }
-		bool test(const Array &x) const {
-	      params2Model (x, varModel_);
-	      const Array &omega = varModel_.omega();
-	      const Matrix &alpha = varModel_.alpha();
-	      const Matrix &beta = varModel_.beta();
-	      Real gamma11 = alpha[0][0] + beta[0][0];
-	      Real gamma21 = alpha[1][0] + beta[1][0];
-	      Real gamma22 = alpha[1][1] + beta[1][1];
-	      Real gamma12 = x[9] + x[10];
-	      return
-			  omega[0] > 0 && omega[1] > 0
-			  // && alpha[0][0] >= 0 && alpha[0][0] < 1
-			  // && alpha[1][1] >= 0 && alpha[1][1] < 1
-			  // && beta[0][0] >= 0 && beta[0][0] < 1
-			  // && beta[1][1] >= 0 && beta[1][1] < 1
-			  // && x[9] >= 0 && x[9] < 1
-			  // && x[10] >= 0 && x[10] < 1
-			  && gamma11 >= 0 && gamma11 < 1
-			  && gamma22 >= 0 && gamma22 < 1
-			  && gamma21 > -omega[1]*(1.0-gamma11)/omega[0] && gamma21 < 1
-			  && gamma12 >= 0 && gamma12 < 1;
-		}
+		Garch11Time(Real a = 0.0, Real b = 0.0, Real vl = 0.0) : _Super(a, b, vl) {}
+		Garch11Time(const TimeSeries& qs) : _Super(qs) {}
 	};
-  public:
-	  Garch2_11Constraint(Garch11Diag &varModel) : Constraint(boost::shared_ptr<Constraint::Impl>(
-							new Garch2_11Constraint::Impl(varModel))) {}
+
+// GARCH 2D
+
+class Garch11Diag {
+public:
+	Garch11Diag (Size dim) : omega_(dim, 0.0), alpha_(dim, dim, 0.0), beta_(dim, dim, 0.0) {
+	}
+
+	Garch11Diag (const Array &omega, const Matrix &alpha, const Matrix &beta) :
+		omega_(omega), alpha_(alpha), beta_(beta) {
+	}
+
+	const Disposable<Array> forecast (const Array &r, const Array &sigma) const;
+	const Array & omega() const { return omega_; }
+	const Matrix & alpha() const { return alpha_; }
+	const Matrix & beta() const { return beta_; }
+
+	Array & omega() { return omega_; }
+	Matrix & alpha() { return alpha_; }
+	Matrix & beta() { return beta_; }
+
+private:
+	Array omega_;
+	Matrix alpha_, beta_;
 };
 
-void initGuess (const std::vector<Volatility> &r1, const std::vector<Volatility> &r2, Array &params) {
-	Size n = std::min(r1.size(), r2.size());
-	std::vector<Volatility> vr1(n), vr2(n);
-	std::vector<boost::function1<Volatility, Volatility> > f;
-    f.push_back(identity<Volatility>());
-
-    LinearLeastSquaresRegression<> lr(r1, r2, f);
-    Volatility bta = lr.coefficients()[0];
-
-	Real mean1 = 0;
-	Real mean2 = 0;
-	Real w = 1.0, u1 = 0, u2 = 0;
-	std::vector<Volatility>::const_iterator itr1 = r1.begin(), itr2 = r2.begin();
-	std::vector<Volatility>::iterator itvr1 = vr1.begin(), itvr2 = vr2.begin();
-	for (Size i = 0; i < n; ++i, ++itr1, ++itr2, ++itvr1, ++itvr2) {
-		u1 = *itr1;
-		u2 = *itr2 - bta*u1;
-		u1 *= u1;
-		u2 *= u2;
-		mean1 = (1.0 - w) * mean1 + w * u1;
-		mean2 = (1.0 - w) * mean2 + w * u2;
-		*itvr1 = u1;
-		*itvr2 = u2;
-		w /= (w + 1.0);
-	}
-
-	Garch11Diag varModel(2);
-	Array &omega = varModel.omega();
-	Matrix &alpha = varModel.alpha();
-	Matrix &beta = varModel.beta();
-
-	try {
-		calibrate_r2 (vr1, mean1, alpha[0][0], beta[0][0], omega[0]);
-		calibrate_r2 (vr2, mean2, alpha[1][1], beta[1][1], omega[1]);
-	} catch (const std::exception &) {
-		// TODO: what to do?
-	}
-	model2Params (varModel, params);
-	params[8] = bta * omega[0];
-	params[9] = alpha[0][0];
-	params[10] = beta[0][0];
+namespace Garch {
+	void initGuess (const std::vector<Volatility> &r1, const std::vector<Volatility> &r2,
+			Array &params);
+	void initGuess (const std::vector<Volatility> &r1, const std::vector<Volatility> &r2,
+			Real omega1, Real alpha1, Real beta1, Array &params);
+	ProblemPtr calibrate (const std::vector<Volatility> &r1, const std::vector<Volatility> &r2, Array &params);
+	ProblemPtr calibrate (const std::vector<Volatility> &r1, const std::vector<Volatility> &r2,
+			Array &params, OptimizationMethod &method, EndCriteria &endCriteria);
+	Disposable<Matrix> forecast (const Array &r, const Matrix &cov, const Garch11Diag &varModel,
+			Real omegaCov, Real alphaCov, Real betaCov);
+	void params2Model (const Array &params, Garch11Diag &varModel);
+	void model2Params (const Garch11Diag &varModel, Array &params);
+	Disposable<Matrix> calcCovMtx (const Array &g, Real beta);
 }
 
-void initGuess (const std::vector<Volatility> &r1, const std::vector<Volatility> &r2,
-		Real omega1, Real alpha1, Real beta1, Array &params) {
-	Size n = std::min(r1.size(), r2.size());
-	std::vector<Volatility> vr2(n);
-	std::vector<boost::function1<Volatility, Volatility> > f;
-    f.push_back(identity<Volatility>());
+//! GARCH(1,1) 2D volatility model
+/*!
+*/
+template <class Time = Date>
+class Garch2_11 {
+public:
+	  typedef TimeSeriesBase<Volatility, Time> TimeSeries;
+	  typedef typename TimeSeries::const_iterator ts_const_iterator;
+	  typedef typename TimeSeries::value_iterator ts_value_iterator;
+	  typedef Garch11T< VolatilityCompositorTime <Time> > Garch11;
 
-    LinearLeastSquaresRegression<> lr(r1, r2, f);
-    Volatility bta = lr.coefficients()[0];
+	  Garch2_11() : varModel_(2), covModel_(), loglikelihood_(0)  {
+	  }
 
-	Real mean2 = 0;
-	Real w = 1.0, u2 = 0;
-	std::vector<Volatility>::const_iterator itr1 = r1.begin(), itr2 = r2.begin();
-	std::vector<Volatility>::iterator itvr2 = vr2.begin();
-	for (Size i = 0; i < n; ++i, ++itr1, ++itr2, ++itvr2) {
-		u2 = *itr2 - bta*(*itr1);
-		u2 *= u2;
-		mean2 = (1.0 - w) * mean2 + w * u2;
-		*itvr2 = u2;
-		w /= (w + 1.0);
-	}
+	  Garch2_11(const Garch11Diag & varModel, const Garch11 & covarModel) :
+		  varModel_(varModel), covModel_(covarModel), loglikelihood_(0)  {
+	  }
 
-	Garch11Diag varModel(2);
-	Array &omega = varModel.omega();
-	Matrix &alpha = varModel.alpha();
-	Matrix &beta = varModel.beta();
+	  const Garch11Diag & diagModel() const { return varModel_; }
 
-	omega[0] = omega1;
-	alpha[0][0] = alpha1;
-	beta[0][0] = beta1;
+	  const Garch11 & covarModel() const { return covModel_; }
 
-	try {
-		calibrate_r2 (vr2, mean2, alpha[1][1], beta[1][1], omega[1]);
-	} catch (const std::exception &) {
-	}
-	model2Params (varModel, params);
-	params[8] = bta * omega[0];
-	params[9] = alpha[0][0];
-	params[10] = beta[0][0];
-}
+	  Real loglikelihood() const { return loglikelihood_; }
 
-ProblemPtr calibrate (const std::vector<Volatility> &r1, const std::vector<Volatility> &r2, Array &params) {
-	EndCriteria endCriteria(10000, 500, tol_level2, tol_level2, tol_level2);
-	Simplex method(0.001);
+	  Disposable<Matrix> ltVol() const {
+		  Matrix I(2, 2, 0.0);
+		  I[0][0] = I[1][1] = 1.0;
+		  Array g = inverse(I - varModel_.alpha() - varModel_.beta())*varModel_.omega();
+		  Real ltCov = covModel_.ltVol();
+		  Real beta = ltCov / g[0];
+		  return Garch::calcCovMtx (g, beta);
+	  }
 
-	return calibrate (r1, r2, params, method, endCriteria);
-}
+	  ProblemPtr calibrate (const TimeSeries &r1, const TimeSeries &r2) {
+		  return calibrate (r1.begin_values(), r1.end_values(), r2.begin_values(), r2.end_values());
+	  }
 
-ProblemPtr calibrate (const std::vector<Volatility> &r1, const std::vector<Volatility> &r2,
-		Array &params, OptimizationMethod &method, EndCriteria &endCriteria) {
-	ProblemPtr res;
-	Garch11Diag varModel(2);
+	  template <typename Iterator1, typename Iterator2>
+	  ProblemPtr calibrate (Iterator1 begin1, Iterator1 end1, Iterator2 begin2, Iterator2 end2) {
+		  std::vector<Volatility> vr1(std::distance(begin1, end1));
+		  std::vector<Volatility> vr2(std::distance(begin2, end2));
+		  std::copy (begin1, end1, vr1.begin());
+		  std::copy (begin2, end2, vr2.begin());
+		  return calibrate(vr1, vr2);
+	  }
 
-	try {
-		Garch2_11CostFunction cost (r1, r2, varModel);
-		Garch2_11Constraint constraints(varModel);
-		res = ProblemPtr( new Problem(cost, constraints, params));
-		method.minimize(*res, endCriteria);
-		const Array &optimum = res->currentValue();
-		std::copy (optimum.begin(), optimum.end(), params.begin());
-	} catch (const std::exception &) {
-	}
-	return res;
-}
+	  template <typename Iterator1, typename Iterator2>
+	  ProblemPtr calibrate (Iterator1 begin1, Iterator1 end1, Iterator2 begin2, Iterator2 end2,
+			  OptimizationMethod &method, EndCriteria &endCriteria) {
+		  std::vector<Volatility> vr1(std::distance(begin1, end1));
+		  std::vector<Volatility> vr2(std::distance(begin2, end2));
+		  std::copy (begin1, end1, vr1.begin());
+		  std::copy (begin2, end2, vr2.begin());
+		  return calibrate(vr1, vr2, method, endCriteria);
+	  }
 
-void params2Model (const Array &params, Garch11Diag &varModel) {
-	Array &omega = varModel.omega();
-	Matrix &alpha = varModel.alpha();
-	Matrix &beta = varModel.beta();
+	  ProblemPtr calibrate (const std::vector<Volatility> &r1, const std::vector<Volatility> &r2) {
+			Array params(11, 0.0);
+			Garch::initGuess (r1, r2, params);
+			loglikelihood_ = Garch::calibrate (r1, r2, params);
+			Garch::params2Model (params, varModel_);
+			covModel_ = Garch11(params[9], params[10], params[8] / (1-params[9]-params[10]));
+			return loglikelihood_;
+	  }
 
-	omega[0] = params[0];
-	omega[1] = params[1];
+	  ProblemPtr calibrate (const std::vector<Volatility> &r1, const std::vector<Volatility> &r2,
+			  OptimizationMethod &method, EndCriteria &endCriteria) {
+			Array params(11, 0.0);
+			Garch::initGuess (r1, r2, params);
+			ProblemPtr res = Garch::calibrate (r1, r2, params, method, endCriteria);
+			loglikelihood_ = res->functionValue();
+			Garch::params2Model (params, varModel_);
+			covModel_ = Garch11(params[9], params[10], params[8] / (1-params[9]-params[10]));
+			return res;
+	  }
 
-	alpha[0][0] = params[2];
-	alpha[0][1] = 0;
-	alpha[1][0] = params[3];
-	alpha[1][1] = params[4];
+	  template <typename Iterator1, typename Iterator2>
+	  ProblemPtr calibrate (Iterator1 begin1, Iterator1 end1, Iterator2 begin2, Iterator2 end2,
+			  const Garch11 &model1) {
+		  std::vector<Volatility> vr1(std::distance(begin1, end1));
+		  std::vector<Volatility> vr2(std::distance(begin2, end2));
+		  std::copy (begin1, end1, vr1.begin());
+		  std::copy (begin2, end2, vr2.begin());
+		  return calibrate(vr1, vr2, model1);
+	  }
 
-	beta[0][0] = params[5];
-	beta[0][1] = 0;
-	beta[1][0] = params[6];
-	beta[1][1] = params[7];
-}
+	  template <typename Iterator1, typename Iterator2>
+	  ProblemPtr calibrate (Iterator1 begin1, Iterator1 end1, Iterator2 begin2, Iterator2 end2,
+			  const Garch11 &model1, OptimizationMethod &method, EndCriteria &endCriteria) {
+		  std::vector<Volatility> vr1(std::distance(begin1, end1));
+		  std::vector<Volatility> vr2(std::distance(begin2, end2));
+		  std::copy (begin1, end1, vr1.begin());
+		  std::copy (begin2, end2, vr2.begin());
+		  return calibrate(vr1, vr2, model1, method, endCriteria);
+	  }
 
-void model2Params (const Garch11Diag &varModel, Array &params) {
-	const Array &omega = varModel.omega();
-	const Matrix &alpha = varModel.alpha();
-	const Matrix &beta = varModel.beta();
+	  ProblemPtr calibrate (const std::vector<Volatility> &r1, const std::vector<Volatility> &r2,
+			  const Garch11 &model1) {
+			Array params(11, 0.0);
+			Garch::initGuess (r1, r2, model1.omega(), model1.alpha(), model1.beta(), params);
+			ProblemPtr res = Garch::calibrate (r1, r2, params);
+			loglikelihood_ = res->functionValue();
+			Garch::params2Model (params, varModel_);
+			covModel_ = Garch11(params[9], params[10], params[8] / (1-params[9]-params[10]));
+			return res;
+	  }
 
-	params[0] = omega[0];
-	params[1] = omega[1];
+	  ProblemPtr calibrate (const std::vector<Volatility> &r1, const std::vector<Volatility> &r2,
+			  const Garch11 &model1, OptimizationMethod &method, EndCriteria &endCriteria) {
+			Array params(11, 0.0);
+			Garch::initGuess (r1, r2, model1.omega(), model1.alpha(), model1.beta(), params);
+			ProblemPtr res = Garch::calibrate (r1, r2, params, method, endCriteria);
+			loglikelihood_ = res->functionValue();
+			Garch::params2Model (params, varModel_);
+			covModel_ = Garch11(params[9], params[10], params[8] / (1-params[9]-params[10]));
+			return loglikelihood_;
+	  }
 
-	params[2] = alpha[0][0];
-	params[3] = alpha[1][0];
-	params[4] = alpha[1][1];
+	  Disposable<Matrix> forecast (const Array &r, const Matrix &cov) const {
+		  return Garch::forecast(r, cov, varModel_, covModel_.omega(), covModel_.alpha(), covModel_.beta());
+	  }
 
-	params[5] = beta[0][0];
-	params[6] = beta[1][0];
-	params[7] = beta[1][1];
-}
-
-Disposable<Matrix> calcCovMtx (const Array &g, Real beta) {
-	  Matrix res(2, 2);
-	  res[0][0] = g[0];
-	  res[1][1] = g[1] + beta*beta*g[0];
-	  res[1][0] = res[0][1] = beta*g[0];
-	  return res;
-}
-
-Garch2_11CostFunction::Garch2_11CostFunction (const std::vector<Volatility> &r1, const std::vector<Volatility> &r2,
-		Garch11Diag &varModel) : r1_(r1), r2_(r2), varModel_(varModel),
-		size_(std::min(r1.size(), r2.size())) {
-
-}
-
-Disposable<Matrix> forecast (const Array &r, const Matrix &cov, const Garch11Diag &varModel,
-		Real omegaCov, Real alphaCov, Real betaCov, Real maxBeta)
-{
-	  Real beta = maxBeta > 0 ? cov[0][0]*maxBeta > std::fabs(cov[1][0]) ? cov[1][0] / cov[0][0] : 0 : cov[0][0] > 0 ? cov[1][0] / cov[0][0] : 0;
-	  Array g(2);
-	  g[0] = cov[0][0];
-	  g[1] = cov[1][1] - beta*cov[1][0];
-	  Array b2(2);
-	  b2[0] = r[0]*r[0];
-	  b2[1] = r[1] - beta * r[0];
-	  b2[1] *= b2[1];
-	  //std::cerr << cov[0][0] << "," << cov[1][0] << ", beta = " << beta << ", g = " << g[0] << "," << g[1] << ", b2 = " << b2[0] << "," << b2[1] << ",";
-	  g = varModel.forecast (b2, g);
-	  if (g[1] < QL_EPSILON)
-		  g[1] = QL_EPSILON;
-	  Real sigma12 = omegaCov + alphaCov*r[0]*r[1] + betaCov*cov[1][0];
-	  Real sigma11 = varModel.omega()[0] + varModel.alpha()[0][0]*r[0]*r[0] + varModel.beta()[0][0]*cov[0][0];
-	  beta = maxBeta > 0 ? sigma11*maxBeta > std::fabs(sigma12) ? sigma12 / sigma11 : 0 : sigma11 > 0 ? sigma12 / sigma11 : 0;
-	  //std::cerr << sigma11 << "," << sigma12 << ", beta = " << beta << ", g = " << g[0] << "," << g[1] << std::endl;
-	  return calcCovMtx (g, beta);
-}
-
-Real Garch2_11CostFunction::value(const Array& x) const {
-	Real retval(0.0);
-	params2Model (x, varModel_);
-	Array g(2, 0.0), b2(2, 0.0);
-	Real sigma21 = 0;
-	Real omega21 = x[8];
-	Real alpha21 = x[9];
-	Real beta21 = x[10];
-	Real q21 = 0, g11 = 0, g22 = 0, r1, r2;
-
-	std::vector<Volatility>::const_iterator itr1 = r1_.begin(), itr2 = r2_.begin();
-	for (Size t = 0; t < size_; ++t, ++itr1, ++itr2) {
-		r1 = *itr1;
-		r2 = *itr2;
-		sigma21 = omega21 + alpha21 * r1*r2 + beta21 * sigma21;
-		b2[0] = r1;
-		b2[1] = r2 - q21 * r1;
-		b2[0] *= b2[0];
-		b2[1] *= b2[1];
-		g = varModel_.forecast (b2, g);
-
-		g11 = g[0];
-		q21 = sigma21 / g11;
-
-		if (g[1] > QL_EPSILON) {
-			g22 = g[1];
-			//rho = std::sqrt (g11*q21*q21/(g22 + g11*q21*q21));
-			//if (q21 < 0) rho = -rho;
-		} else {
-			g22 = QL_EPSILON;
-		}
-
-		retval += std::log (g11*g22) + b2[0] / g11 + b2[1] / g22;
-	}
-
-	return 0.5 * retval / size_;
-}
-
-Disposable<Array> Garch2_11CostFunction::values(const Array& x) const {
-    Array retval (size_);
-	params2Model (x, varModel_);
-	Array g(2, 0.0), b2(2, 0.0);
-	Real sigma21 = 0;
-	Real omega21 = x[8];
-	Real alpha21 = x[9];
-	Real beta21 = x[10];
-	Real q21 = 0, g11 = 0, g22 = 0, rho = 0;
-
-	for (Size t = 0; t < size_; ++t) {
-		sigma21 = omega21 + alpha21 * r1_[t]*r2_[t] + beta21 * sigma21;
-		b2[0] = r1_[t];
-		b2[1] = r2_[t] - q21 * r1_[t];
-		b2[0] *= b2[0];
-		b2[1] *= b2[1];
-		g = varModel_.forecast (b2, g);
-
-		g11 = g[0];
-		q21 = sigma21 / g11;
-
-		if (g[1] > QL_EPSILON) {
-			g22 = g[1];
-			rho = std::sqrt (g11*q21*q21/(g22 + g11*q21*q21));
-			if (q21 < 0) rho = -rho;
-		} else {
-			g22 = QL_EPSILON;
-		}
-
-		retval[t] = std::log (g11) + std::log (g22) + b2[0] / g11 + b2[1] / g22;
-	}
-
-	return retval;
-}
-
-void Garch2_11CostFunction::gradient(Array& grad, const Array& x) const {
-	std::fill (grad.begin(), grad.end(), 0);
-}
-
-Real Garch2_11CostFunction::valueAndGradient(Array& grad, const Array& x) const {
-	gradient(grad, x);
-	return value (x);
-}
-
-} // namespace Garch 
-
-const Disposable<Array> Garch11Diag::forecast (const Array &r2, const Array &sigma2) const {
-	Array res = omega_ + alpha_*r2 + beta_*sigma2;
-	return res;
-}
+private:
+	Garch11Diag varModel_;
+	Garch11 covModel_;
+	Real loglikelihood_;
+};
 
 } // namespace QuantLib
 
 
+#endif
