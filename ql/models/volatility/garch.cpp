@@ -328,7 +328,7 @@ namespace QuantLib { namespace Garch {
 		  OptimizationMethod &method, const EndCriteria &endCriteria,
 		  Real &alpha, Real &beta, Real &omega) {
 	Garch11CostFunction cost (r2);
-	Real dataSize = r2.size();
+	Real dataSize = Real(r2.size());
 	alpha = 0.0;
 	beta = 0.0;
 	omega = 0.0;
