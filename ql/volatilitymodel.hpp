@@ -1,7 +1,7 @@
 /* -*- mode: c++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 
 /*
- Copyright (C) 2006 Joseph Wang
+ Copyright (C) 2006 Joseph Wang, 2010 Liquidnet Holdings
 
  This file is part of QuantLib, a free-software/open-source library
  for financial quantitative analysts and developers - http://quantlib.org/
@@ -39,44 +39,30 @@ namespace QuantLib {
     };
 
     template <class T>
-	class LocalVolatilityEstimator : public LocalVolatilityEstimatorTime<T, Date> {
+    class LocalVolatilityEstimator {
     public:
+        virtual ~LocalVolatilityEstimator() {}
         virtual TimeSeries<Volatility>
         calculate(const TimeSeries<T> &quoteSeries) = 0;
-        virtual TimeSeriesBase<Volatility, Date>
-		calculate(const TimeSeriesBase<T, Date> &quoteSeries) {
-			return calculate(static_cast<const TimeSeries<T> &>(quoteSeries));
-		}
     };
 
-    template <class Time>
-	class VolatilityCompositorTime {
+    template <class Time = Date>
+    class VolatilityCompositorTime {
       public:
-		typedef Time time;
-		typedef TimeSeriesBase<Volatility, Time> time_series;
-
         virtual ~VolatilityCompositorTime() {}
-        virtual time_series calculate(const time_series& volatilitySeries) = 0;
-        virtual void calibrate(const time_series& volatilitySeries) = 0;
+        virtual TimeSeriesBase<Volatility, Time>
+        calculate(const TimeSeriesBase<Volatility, Time>& volatilitySeries) = 0;
+        virtual void calibrate(const TimeSeriesBase<Volatility, Time>& volatilitySeries) = 0;
     };
 
-	class VolatilityCompositor : public VolatilityCompositorTime<Date> {
-	public:
-		typedef Date time;
-		typedef TimeSeries<Volatility> time_series;
-		typedef TimeSeriesBase<Volatility, Date> time_series_base;
-
-        virtual time_series calculate(const time_series& volatilitySeries) = 0;
-        virtual void calibrate(const time_series& volatilitySeries) = 0;
-        virtual time_series_base calculate(const time_series_base& volatilitySeries) {
-			return calculate(static_cast<const time_series &>(volatilitySeries));
-		}
-		virtual void calibrate(const time_series_base & volatilitySeries) {
-			calibrate(static_cast<const time_series &>(volatilitySeries));
-		}
-	};
+    class VolatilityCompositor {
+    public:
+      virtual ~VolatilityCompositor() {}
+      virtual TimeSeries<Volatility>
+      calculate(const TimeSeries<Volatility>& volatilitySeries) = 0;
+      virtual void calibrate(const TimeSeries<Volatility>& volatilitySeries) = 0;
+  };
 
 }
-
 
 #endif
