@@ -32,7 +32,7 @@ namespace QuantLib {
     //! Constant-estimator volatility model
     /*! Volatilities are assumed to be expressed on an annual basis.
     */
-    class ConstantEstimator : public VolatilityCompositor {
+    class ConstantEstimator : public VolatilityCompositor<> {
       private:
         Size size_;
       public:
