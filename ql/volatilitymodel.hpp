@@ -31,38 +31,28 @@
 namespace QuantLib {
 
     template <class T, class Time = Date>
-    class LocalVolatilityEstimatorTime {
-    public:
-        virtual ~LocalVolatilityEstimatorTime() {}
-        virtual TimeSeriesBase<Volatility, Time>
-        calculate(const TimeSeriesBase<T, Time> &quoteSeries) = 0;
-    };
-
-    template <class T>
     class LocalVolatilityEstimator {
     public:
+    	typedef Time TimeUnits;
+    	typedef TimeSeriesBase<T, Time> TimeSeriesIn;
+    	typedef TimeSeriesBase<Volatility, Time> TimeSeriesOut;
         virtual ~LocalVolatilityEstimator() {}
-        virtual TimeSeries<Volatility>
-        calculate(const TimeSeries<T> &quoteSeries) = 0;
+        virtual TimeSeriesOut calculate(const TimeSeriesIn &quoteSeries) { return TimeSeriesOut(); }
+        virtual TimeSeries<Volatility> calculate(const TimeSeries<T> &quoteSeries) = 0;
     };
 
     template <class Time = Date>
-    class VolatilityCompositorTime {
-      public:
-        virtual ~VolatilityCompositorTime() {}
-        virtual TimeSeriesBase<Volatility, Time>
-        calculate(const TimeSeriesBase<Volatility, Time>& volatilitySeries) = 0;
-        virtual void calibrate(const TimeSeriesBase<Volatility, Time>& volatilitySeries) = 0;
-    };
-
     class VolatilityCompositor {
-    public:
-      virtual ~VolatilityCompositor() {}
-      virtual TimeSeries<Volatility>
-      calculate(const TimeSeries<Volatility>& volatilitySeries) = 0;
-      virtual void calibrate(const TimeSeries<Volatility>& volatilitySeries) = 0;
-  };
-
+      public:
+    	typedef Time TimeUnits;
+    	typedef TimeSeriesBase<Volatility, Time> TimeSeriesIn;
+    	typedef TimeSeriesBase<Volatility, Time> TimeSeriesOut;
+        virtual ~VolatilityCompositor() {}
+        virtual TimeSeriesOut calculate(const TimeSeriesIn& volatilitySeries) { return TimeSeriesOut(); }
+        virtual void calibrate(const TimeSeriesIn& volatilitySeries) {}
+        virtual TimeSeries<Volatility> calculate(const TimeSeries<Volatility>& volatilitySeries) = 0;
+        virtual void calibrate(const TimeSeries<Volatility>& volatilitySeries) = 0;
+    };
 }
 
 #endif
